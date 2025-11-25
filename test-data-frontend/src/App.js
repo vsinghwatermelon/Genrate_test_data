@@ -146,21 +146,30 @@ function App() {
         setResponse(null);
 
         try {
+            // Ensure we send the script as a proper string (preserve newlines).
+            const payload = {
+                selenium_script: String(seleniumScript),
+                parse_only: true
+            };
+
             const res = await fetch('http://localhost:8000/generate-from-selenium', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ selenium_script: seleniumScript, parse_only: true })
+                body: JSON.stringify(payload)
             });
 
+            // Backend will return parsed_schema and optionally parse_error.
+            const data = await res.json();
             if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || `Error: ${res.status}`);
+                // If server included parse_error in detail, show it.
+                const detail = data.detail || data.parse_error || `Error: ${res.status}`;
+                throw new Error(detail);
             }
 
-            const data = await res.json();
-            // expect { parsed_schema: [...] }
-            if (data.parsed_schema) {
-                setParsedSchema(data.parsed_schema);
+            // Populate parsed schema (may be empty) so user can inspect it.
+            setParsedSchema(data.parsed_schema || null);
+
+            if (data.parsed_schema && data.parsed_schema.length > 0) {
                 const normalized = normalizeIncomingFields(data.parsed_schema);
                 setParsedFields(normalized);
                 setParsedNumRecords(5);
@@ -168,7 +177,12 @@ function App() {
                 setParsedWrongNumRecords(0);
                 setParsedAdditionalRules('');
             } else {
-                setError('Parser returned no schema');
+                // If the backend returned a parse_error, surface it in the UI.
+                if (data.parse_error) {
+                    setError(data.parse_error);
+                } else {
+                    setError('Parser returned no schema');
+                }
             }
         } catch (err) {
             setError(err.message);

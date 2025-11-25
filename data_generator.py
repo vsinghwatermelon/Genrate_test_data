@@ -1,7 +1,25 @@
 
-from langchain_ollama import OllamaLLM
+from langchain_ollama import OllamaLLM, OllamaError
 import json
 import re
+import sys
+
+
+def _safe_print(text: str) -> None:
+    """Print text safely to consoles that may not support some Unicode chars.
+
+    Falls back to a UTF-8 replacement encoding if the default stdout encoding
+    can't handle certain characters (common on Windows consoles).
+    """
+    try:
+        print(text)
+    except Exception:
+        try:
+            enc = sys.stdout.encoding or 'utf-8'
+            print(text.encode(enc, errors='replace').decode(enc))
+        except Exception:
+            # Last resort: replace non-decodable chars with ?
+            print(text.encode('utf-8', errors='replace').decode('utf-8'))
 
 
 class TestDataGenerator:
@@ -149,6 +167,10 @@ class TestDataGenerator:
         # Remove blank lines
         response = '\n'.join([line for line in response.splitlines() if line.strip()])
         
+        # Fix escaped single quotes - JSON doesn't require escaping single quotes
+        # LLMs sometimes generate \' which is invalid in JSON
+        response = response.replace("\\'", "'")
+        
         # Remove lone 'null' tokens that appear as standalone entries inside objects
         # e.g. { "a": 1, null, "b": 2 } -> { "a": 1, "b": 2 }
         response = re.sub(r',\s*null\s*,', ',', response)
@@ -181,38 +203,114 @@ class TestDataGenerator:
             )
 
             print(f"\n--- PROMPT SENT TO LLM ---")
-            print(prompt)
+            _safe_print(prompt)
             print(f"--- END PROMPT ---\n")
 
-            # Generate data using Ollama
-            response = self.llm.invoke(prompt)
+            # Generate data using Ollama (may raise OllamaError for connection/empty responses)
+            try:
+                response = self.llm.invoke(prompt)
+                print(f"LLM invocation successful.")
+                print(response)
+            except OllamaError as e:
+                raise Exception(f"LLM connection/error: {e}")
 
             print(f"\n--- LLM RESPONSE ---")
-            print(response)
+            # _safe_print(response)
             print(f"--- END RESPONSE ---\n")
 
             # Extract JSON from response
-            json_match = re.search(r'\[.*\]', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-            else:
-                # Try to fix incomplete response
-                json_str = response.strip()
-                if json_str.startswith('[') and not json_str.endswith(']'):
-                    json_str += '\n]'
-                json_str = re.sub(r',(\s*\])', r'\1', json_str)
+            # First, try to parse the response as NDJSON (Ollama streams many JSON objects).
+            # If NDJSON, extract each object's `response` field and concatenate them in order.
+            assembled = ''
+            try:
+                for line in (response or '').splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        if isinstance(obj, dict) and 'response' in obj:
+                            assembled += obj['response']
+                        else:
+                            # Not the expected NDJSON object; ignore
+                            continue
+                    except Exception:
+                        # Not a JSON line; ignore and continue
+                        continue
+            except Exception:
+                assembled = ''
+
+            # If we assembled something from NDJSON, prefer that; otherwise use raw response
+            source_for_extraction = assembled if assembled else (response or '')
+
+            def _extract_first_json_array(text: str) -> str | None:
+                """Find the first balanced JSON array in `text` and return it, or None.
+
+                This scanner handles quoted strings and escapes so it doesn't stop
+                on brackets that appear inside strings.
+                """
+                if not text:
+                    return None
+                start = text.find('[')
+                if start == -1:
+                    return None
+                i = start
+                depth = 0
+                in_str = False
+                escape = False
+                while i < len(text):
+                    ch = text[i]
+                    if in_str:
+                        if escape:
+                            escape = False
+                        elif ch == '\\':
+                            escape = True
+                        elif ch == '"':
+                            in_str = False
+                    else:
+                        if ch == '"':
+                            in_str = True
+                        elif ch == '[':
+                            depth += 1
+                        elif ch == ']':
+                            depth -= 1
+                            if depth == 0:
+                                return text[start:i+1]
+                    i += 1
+                return None
+
+            # Try to extract the first JSON array from the assembled source
+            json_str = _extract_first_json_array(source_for_extraction)
+            if not json_str:
+                # Fallback: existing heuristics on the raw response
+                json_match = re.search(r'\[.*\]', response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    # Try to fix incomplete response
+                    json_str = (response or '').strip()
+                    if json_str.startswith('[') and not json_str.endswith(']'):
+                        json_str += '\n]'
+                    json_str = re.sub(r',(\s*\])', r'\1', json_str)
             
             # Clean JSON
             json_str = self._clean_json_response(json_str)
 
             print(f"\n--- CLEANED JSON ---")
-            print(json_str)
+            # _safe_print(json_str)
             print(f"--- END CLEANED JSON ---\n")
 
             # Parse JSON (try a second repair pass if initial parse fails)
             try:
                 generated_data = json.loads(json_str)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as jde:
+                # Include raw LLM response snippet in the error to aid debugging
+                raw_snippet = (response or '')[:1000]
+                raise json.JSONDecodeError(
+                    f"{str(jde)} -- raw LLM response snippet: {raw_snippet}",
+                    jde.doc,
+                    jde.pos,
+                )
                 # Attempt additional, aggressive fixes for common LLM formatting issues
                 repaired = json_str
                 # Replace single quotes with double quotes when safe (only for simple cases)
@@ -229,7 +327,7 @@ class TestDataGenerator:
                 repaired = re.sub(r',\s*,+', ',', repaired)
 
                 print("\n--- REPAIRED JSON ATTEMPT ---")
-                print(repaired)
+                # _safe_print(repaired)
                 print("--- END REPAIRED JSON ATTEMPT ---\n")
 
                 # Try parsing repaired JSON

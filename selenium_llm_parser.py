@@ -10,7 +10,7 @@ from data_generator import TestDataGenerator
 def parse_selenium_script(script_text: str) -> Tuple[List[dict], Optional[str]]:
 
     script_text = script_text or ''
-    llm = OllamaLLM(model="qwen3-vl:235b-cloud", temperature=0.0)
+    llm = OllamaLLM(model="llama3:latest", temperature=0.0)
     # Stronger, more explicit prompt to handle opaque IDs, label->input mapping, Tab sequences, and value-based inference.
     parse_prompt = (
         """You are an expert parser assistant. Given a Selenium-like script (Python or JS), extract all form fields the script interacts with (calls like driver.enter_text, driver.get_text).
@@ -127,34 +127,97 @@ Selenium script:
     )
 
     try:
-        resp = llm.invoke(parse_prompt)
-        json_match = re.search(r'\[.*\]', resp, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
+      resp = llm.invoke(parse_prompt)
+
+      # Assemble NDJSON stream if present (Ollama streams many small JSON objects).
+      assembled = ''
+      try:
+        for line in (resp or '').splitlines():
+          line = line.strip()
+          if not line:
+            continue
+          try:
+            obj = json.loads(line)
+            if isinstance(obj, dict) and 'response' in obj:
+              assembled += obj['response']
+          except Exception:
+            # not a JSON line, ignore
+            continue
+      except Exception:
+        assembled = ''
+
+      source_text = assembled if assembled else (resp or '')
+
+      def _extract_first_json_array(text: str) -> Optional[str]:
+        if not text:
+          return None
+        start = text.find('[')
+        if start == -1:
+          return None
+        i = start
+        depth = 0
+        in_str = False
+        escape = False
+        while i < len(text):
+          ch = text[i]
+          if in_str:
+            if escape:
+              escape = False
+            elif ch == '\\':
+              escape = True
+            elif ch == '"':
+              in_str = False
+          else:
+            if ch == '"':
+              in_str = True
+            elif ch == '[':
+              depth += 1
+            elif ch == ']':
+              depth -= 1
+              if depth == 0:
+                return text[start:i+1]
+          i += 1
+        return None
+
+      json_str = _extract_first_json_array(source_text)
+      if not json_str:
+        # fallback to naive regex on raw resp
+        m = re.search(r'\[.*\]', resp, re.DOTALL)
+        if m:
+          json_str = m.group(0)
         else:
-            json_str = resp.strip()
+          json_str = source_text.strip()
 
-        # Use TestDataGenerator's cleaning utilities for common LLM formatting issues
-        cleaner = TestDataGenerator()
-        json_str = cleaner._clean_json_response(json_str)
+      # Clean and attempt to parse
+      cleaner = TestDataGenerator()
+      json_str = cleaner._clean_json_response(json_str)
 
+      try:
         parsed = json.loads(json_str)
-        # ensure list of dicts
-        if not isinstance(parsed, list):
-            parsed = [parsed]
-        # normalize items to required keys
-        normalized = []
-        for item in parsed:
-            if not isinstance(item, dict):
-                continue
-            normalized.append({
-                'name': item.get('name', '').strip(),
-                'type': item.get('type', 'string'),
-                'rules': item.get('rules', '') or '',
-                'description': item.get('description', '') or '',
-                'example': item.get('example', '') or '',
-                'confidence': float(item.get('confidence', 0.0))
-            })
-        return normalized, None
+      except Exception as e:
+        snippet = (source_text or '')[:1500]
+        return [], f"Failed to JSON-decode parser output: {str(e)}\nRaw snippet:\n{snippet}"
+
+      if not isinstance(parsed, list):
+        parsed = [parsed]
+
+      normalized = []
+      for item in parsed:
+        if not isinstance(item, dict):
+          continue
+        normalized.append({
+          'name': item.get('name', '').strip(),
+          'type': item.get('type', 'string'),
+          'rules': item.get('rules', '') or '',
+          'description': item.get('description', '') or '',
+          'example': item.get('example', '') or '',
+          'confidence': float(item.get('confidence', 0.0))
+        })
+
+      if not normalized:
+        snippet = (source_text or '')[:1500]
+        return [], f"No fields parsed from LLM output. Raw LLM snippet:\n{snippet}"
+
+      return normalized, None
     except Exception as e:
-        return [], f"LLM parsing failed: {str(e)}"
+      return [], f"LLM parsing failed: {str(e)}"

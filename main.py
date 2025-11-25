@@ -201,19 +201,21 @@ async def generate_from_selenium(request: dict):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to parse Selenium script: {str(e)}")
 
-        if not parsed_schema:
-            raise HTTPException(status_code=400, detail="No form fields could be parsed from the provided Selenium script")
-        
-        print(f"Parsed schema from Selenium script: {parsed_schema}")
-        # If frontend requested parse-only, return parsed schema for review
+        # If frontend requested parse-only, return parsed schema and any parse_error for debugging.
         if parse_only:
-            response_payload = {
-                "parsed_schema": parsed_schema
-            }
+            response_payload = {"parsed_schema": parsed_schema}
             if parse_error:
                 response_payload["parse_error"] = parse_error
-            # Do not generate test data here — frontend will call /generate after user confirms
             return response_payload
+
+        # If not parse-only, require parsed fields; include parse_error in the HTTP detail when failing
+        if not parsed_schema:
+            detail_msg = "No form fields could be parsed from the provided Selenium script"
+            if parse_error:
+                detail_msg += f": {parse_error}"
+            raise HTTPException(status_code=400, detail=detail_msg)
+
+        print(f"Parsed schema from Selenium script: {parsed_schema}")
 
         # Otherwise, proceed to generate using the extracted schema
         generator = TestDataGenerator()
