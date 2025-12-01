@@ -22,7 +22,7 @@ OUTPUT: Complete database with proper PKs, FKs, and realistic data
 import json
 import re
 from typing import Dict, List, Any
-from langchain_ollama import OllamaLLM
+from llm_factory import LLMFactory
 from intelligent_db_generator import IntelligentDatabaseGenerator
 
 
@@ -40,8 +40,13 @@ class TextParserAgent:
     - Relationships hints
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.1)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.1)
+        else:
+            self.llm = LLMFactory.create_llm(provider=provider, temperature=0.1)
     
     def parse(self, user_text: str) -> Dict[str, Any]:
         """Extract structured information from natural language."""
@@ -112,8 +117,13 @@ class SchemaDesignerAgent:
     - Adding common fields (created_at, updated_at, etc.)
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.2)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.2)
+        else:
+            self.llm = LLMFactory.create_llm(provider=provider, temperature=0.2)
     
     def design_schema(self, table_info: Dict[str, Any], all_tables: List[str]) -> List[Dict[str, Any]]:
         """Design complete field schema for a table."""
@@ -189,8 +199,13 @@ class RelationshipDetectorAgent:
     Uses relationship hints from text parser and semantic analysis.
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.2)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.2)
+        else:
+            self.llm = LLMFactory.create_llm(provider=provider, temperature=0.2)
     
     def detect_relationships(
         self, 
@@ -269,8 +284,13 @@ class SchemaValidatorAgent:
     - Schema is complete and ready for generation
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.1)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.1)
+        else:
+            self.llm = LLMFactory.create_llm(provider=provider, temperature=0.1)
     
     def validate(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and optionally fix the schema."""
@@ -317,13 +337,22 @@ class NaturalLanguageDatabaseGenerator:
     Main orchestrator that uses multiple agents to generate databases from natural language.
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
         self.model_name = model_name
-        self.text_parser = TextParserAgent(model_name)
-        self.schema_designer = SchemaDesignerAgent(model_name)
-        self.relationship_detector = RelationshipDetectorAgent(model_name)
-        self.schema_validator = SchemaValidatorAgent(model_name)
-        self.db_generator = IntelligentDatabaseGenerator(model_name)
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.text_parser = TextParserAgent(model_name, provider)
+            self.schema_designer = SchemaDesignerAgent(model_name, provider)
+            self.relationship_detector = RelationshipDetectorAgent(model_name, provider)
+            self.schema_validator = SchemaValidatorAgent(model_name, provider)
+            self.db_generator = IntelligentDatabaseGenerator(model_name, provider)
+        else:
+            self.text_parser = TextParserAgent(provider=provider)
+            self.schema_designer = SchemaDesignerAgent(provider=provider)
+            self.relationship_detector = RelationshipDetectorAgent(provider=provider)
+            self.schema_validator = SchemaValidatorAgent(provider=provider)
+            self.db_generator = IntelligentDatabaseGenerator(provider=provider)
     
     def generate_from_text(self, user_text: str) -> Dict[str, Any]:
         """

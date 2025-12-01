@@ -6,9 +6,14 @@ from data_generator import TestDataGenerator
 
 class DatabaseTestDataGenerator:
 
-    def __init__(self, model_name: str = "llama3:latest"):
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
         self.model_name = model_name
-        self.table_generator = TestDataGenerator(model_name=model_name)
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.table_generator = TestDataGenerator(model_name=model_name, provider=provider)
+        else:
+            self.table_generator = TestDataGenerator(provider=provider)
 
     # ------------------------------------------------------------------------
     # Helper Methods

@@ -1,8 +1,9 @@
 
-from langchain_ollama import OllamaLLM, OllamaError
+from langchain_ollama import OllamaError
 import json
 import re
 import sys
+from llm_factory import LLMFactory
 
 
 def _safe_print(text: str) -> None:
@@ -24,8 +25,13 @@ def _safe_print(text: str) -> None:
 
 class TestDataGenerator:
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.7)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.7)
+        else:
+            self.llm = LLMFactory.create_llm(provider=provider, temperature=0.7)
 
     def _create_prompt(
         self, 
@@ -153,6 +159,38 @@ class TestDataGenerator:
         return prompt
 
     def _clean_json_response(self, response: str) -> str:
+        # First, remove control characters (except newline, tab, carriage return)
+        # Control characters in JSON strings cause parsing errors
+        cleaned = []
+        for char in response:
+            code = ord(char)
+            # Keep printable chars, newlines, tabs, carriage returns
+            if code >= 32 or char in '\n\r\t':
+                cleaned.append(char)
+            else:
+                # Replace other control chars with space
+                cleaned.append(' ')
+        response = ''.join(cleaned)
+        
+        # Escape unescaped forward slashes in URLs within JSON strings
+        # This fixes issues like: "example": "https://example.com/"
+        # Pattern: Find URLs and ensure they're properly formatted
+        def escape_urls_in_json(text):
+            # Find all string values that look like URLs and ensure forward slashes are handled
+            # JSON doesn't require escaping / but some parsers are sensitive
+            import re
+            # This pattern finds "key": "value" pairs where value contains http:// or https://
+            pattern = r'("(?:example|url|website|link)[^"]*":\s*")(https?://[^"]*?)(")'
+            def replacer(match):
+                prefix = match.group(1)
+                url = match.group(2)
+                suffix = match.group(3)
+                # URLs are fine as-is in JSON, just ensure no control chars
+                return prefix + url + suffix
+            return re.sub(pattern, replacer, text, flags=re.IGNORECASE)
+        
+        response = escape_urls_in_json(response)
+        
         # Remove double brackets
         response = re.sub(r'^\s*\[\s*\[', '[', response)
         response = re.sub(r'\]\s*\]\s*$', ']', response)

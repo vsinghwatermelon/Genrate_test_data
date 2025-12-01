@@ -24,7 +24,7 @@ import re
 import random
 from typing import Dict, List, Any
 from data_generator import TestDataGenerator
-from langchain_ollama import OllamaLLM
+from llm_factory import LLMFactory
 
 
 # ============================================================================
@@ -37,8 +37,9 @@ class PrimaryKeyDetectionAgent:
     Ensures every table has a proper unique identifier.
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.1)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.1)
     
     def detect_or_create_primary_key(self, table: Dict[str, Any]) -> str:
         """
@@ -123,8 +124,13 @@ class ForeignKeyDetectionAgent:
     Identifies which fields in one table reference primary keys in other tables.
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.2)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        # Only pass model_name for Ollama; Groq uses model from .env
+        if provider == "ollama":
+            self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.2)
+        else:
+            self.llm = LLMFactory.create_llm(provider=provider, temperature=0.2)
     
     def detect_foreign_keys(
         self, 
@@ -201,8 +207,9 @@ class SchemaEnhancementAgent:
     This agent suggests NEW fields that should be added for proper relational design.
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.3)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.3)
     
     def suggest_missing_relationships(
         self,
@@ -295,8 +302,9 @@ class RelationshipInferenceAgent:
     based on its purpose and relationships.
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.3)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.3)
     
     def infer_additional_rules(self, table: Dict[str, Any], schema_analysis: Dict[str, Any]) -> str:
         """
@@ -361,8 +369,9 @@ class DataValidationAgent:
     - Uniqueness constraints
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
-        self.llm = OllamaLLM(model=model_name, temperature=0.1)
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
+        self.provider = provider
+        self.llm = LLMFactory.create_llm(provider=provider, model_name=model_name, temperature=0.1)
     
     def validate_database(
         self, 
@@ -488,15 +497,24 @@ class IntelligentDatabaseGenerator:
     6. DataValidationAgent - Validates referential integrity
     """
     
-    def __init__(self, model_name: str = "llama3:latest"):
+    def __init__(self, model_name: str = "llama3:latest", provider: str = "ollama"):
         self.model_name = model_name
-        # Specialized agents
-        self.pk_detector = PrimaryKeyDetectionAgent(model_name)
-        self.fk_detector = ForeignKeyDetectionAgent(model_name)
-        self.schema_enhancer = SchemaEnhancementAgent(model_name)
-        self.relationship_inferencer = RelationshipInferenceAgent(model_name)
-        self.data_validator = DataValidationAgent(model_name)
-        self.table_generator = TestDataGenerator(model_name)
+        self.provider = provider
+        # Specialized agents - only pass model_name for Ollama
+        if provider == "ollama":
+            self.pk_detector = PrimaryKeyDetectionAgent(model_name, provider)
+            self.fk_detector = ForeignKeyDetectionAgent(model_name, provider)
+            self.schema_enhancer = SchemaEnhancementAgent(model_name, provider)
+            self.relationship_inferencer = RelationshipInferenceAgent(model_name, provider)
+            self.data_validator = DataValidationAgent(model_name, provider)
+            self.table_generator = TestDataGenerator(model_name, provider)
+        else:
+            self.pk_detector = PrimaryKeyDetectionAgent(provider=provider)
+            self.fk_detector = ForeignKeyDetectionAgent(provider=provider)
+            self.schema_enhancer = SchemaEnhancementAgent(provider=provider)
+            self.relationship_inferencer = RelationshipInferenceAgent(provider=provider)
+            self.data_validator = DataValidationAgent(provider=provider)
+            self.table_generator = TestDataGenerator(provider=provider)
     
     def generate_database(self, db_schema: Dict[str, Any]) -> Dict[str, Any]:
         tables = db_schema.get("tables", [])

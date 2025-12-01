@@ -56,6 +56,7 @@ async def generate_test_data(request: dict):
         correct_num_records = request.get("correct_num_records", 5)
         wrong_num_records = request.get("wrong_num_records", 0)
         additional_rules = request.get("additional_rules")
+        model_provider = request.get("model_provider", "ollama")  # "ollama" or "groq"
 
         # Validate required fields
         if not schema_fields:
@@ -65,7 +66,7 @@ async def generate_test_data(request: dict):
             )
         
         # Generate data
-        generator = TestDataGenerator()
+        generator = TestDataGenerator(provider=model_provider)
         result = generator.generate_data(
             schema_fields=schema_fields,
             num_records=num_records,
@@ -121,13 +122,14 @@ async def generate_database(request: dict):
         
         # Choose generator based on mode
         use_intelligent = db_schema.get("use_intelligent_mode", True)
+        model_provider = db_schema.get("model_provider", "ollama")  # "ollama" or "groq"
         
         if use_intelligent:
             print("Using INTELLIGENT mode with AI agents")
-            generator = IntelligentDatabaseGenerator()
+            generator = IntelligentDatabaseGenerator(provider=model_provider)
         else:
             print("Using MANUAL mode (requires explicit PK/FK)")
-            generator = DatabaseTestDataGenerator()
+            generator = DatabaseTestDataGenerator(provider=model_provider)
         
         result = generator.generate_database(db_schema)
         
@@ -163,8 +165,11 @@ async def generate_from_natural_language(request: dict):
         
         print(f"NATURAL LANGUAGE GENERATION REQUEST")
         
+        # Get model provider
+        model_provider = request.get("model_provider", "ollama")  # "ollama" or "groq"
+        
         # Generate database from natural language
-        generator = NaturalLanguageDatabaseGenerator()
+        generator = NaturalLanguageDatabaseGenerator(provider=model_provider)
         result = generator.generate_from_text(user_text)
         
         print(f"\nNatural language generation completed successfully!")
@@ -192,12 +197,13 @@ async def generate_from_selenium(request: dict):
         additional_rules = request.get("additional_rules")
         # If client only wants parsing (no generation), set parse_only=True
         parse_only = request.get("parse_only", False)
+        model_provider = request.get("model_provider", "ollama")  # "ollama" or "groq"
 
         if not script_text:
             raise HTTPException(status_code=400, detail="selenium_script is required and cannot be empty")
         # Use the dedicated parser module which encapsulates LLM parsing and fallback logic
         try:
-            parsed_schema, parse_error = parse_selenium_script(script_text)
+            parsed_schema, parse_error = parse_selenium_script(script_text, provider=model_provider)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to parse Selenium script: {str(e)}")
 
@@ -218,7 +224,7 @@ async def generate_from_selenium(request: dict):
         print(f"Parsed schema from Selenium script: {parsed_schema}")
 
         # Otherwise, proceed to generate using the extracted schema
-        generator = TestDataGenerator()
+        generator = TestDataGenerator(provider=model_provider)
         result = generator.generate_data(
             schema_fields=parsed_schema,
             num_records=num_records,

@@ -66,6 +66,7 @@ function App() {
     const [error, setError] = useState('');
     const [viewMode, setViewMode] = useState('json');
     const [selectedTable, setSelectedTable] = useState(null);
+    const [modelProvider, setModelProvider] = useState('ollama'); // 'ollama' or 'groq'
 
     // ========================================================================
     // SINGLE TABLE MODE - Field Management
@@ -149,7 +150,8 @@ function App() {
             // Ensure we send the script as a proper string (preserve newlines).
             const payload = {
                 selenium_script: String(seleniumScript),
-                parse_only: true
+                parse_only: true,
+                model_provider: modelProvider
             };
 
             const res = await fetch('http://localhost:8000/generate-from-selenium', {
@@ -217,7 +219,8 @@ function App() {
                     num_records: parseInt(parsedNumRecords) || 0,
                     correct_num_records: parseInt(parsedCorrectNumRecords) || 0,
                     wrong_num_records: parseInt(parsedWrongNumRecords) || 0,
-                    additional_rules: parsedAdditionalRules || undefined
+                    additional_rules: parsedAdditionalRules || undefined,
+                    model_provider: modelProvider
                 })
             });
 
@@ -385,12 +388,14 @@ function App() {
                     num_records: parseInt(numRecords),
                     correct_num_records: parseInt(correctNumRecords),
                     wrong_num_records: parseInt(wrongNumRecords),
-                    additional_rules: additionalRules || undefined
+                    additional_rules: additionalRules || undefined,
+                    model_provider: modelProvider
                 };
             } else if (mode === 'natural') {
                 endpoint = 'http://localhost:8000/generate-from-text';
                 body = {
-                    user_text: naturalLanguageText
+                    user_text: naturalLanguageText,
+                    model_provider: modelProvider
                 };
             } else if (mode === 'selenium') {
                 endpoint = 'http://localhost:8000/generate-from-selenium';
@@ -399,7 +404,8 @@ function App() {
                     num_records: parseInt(seleniumNumRecords),
                     correct_num_records: parseInt(seleniumCorrectNumRecords),
                     wrong_num_records: parseInt(seleniumWrongNumRecords),
-                    additional_rules: seleniumAdditionalRules || undefined
+                    additional_rules: seleniumAdditionalRules || undefined,
+                    model_provider: modelProvider
                 };
             } else {
                 endpoint = 'http://localhost:8000/generate-db';
@@ -407,6 +413,7 @@ function App() {
                     db_schema: {
                         db_name: dbName || 'my_database',
                         use_intelligent_mode: intelligentMode,
+                        model_provider: modelProvider,
                         tables: tables
                             .filter(t => t.table_name)
                             .map(t => ({
@@ -485,6 +492,35 @@ function App() {
                 >
                     🧾 From Selenium
                 </button>
+            </div>
+
+            {/* Model Provider Selection */}
+            <div className="model-provider-selector">
+                <label style={{ fontWeight: 'bold', marginRight: '15px' }}>
+                    🤖 AI Model:
+                </label>
+                <label style={{ marginRight: '20px' }}>
+                    <input
+                        type="radio"
+                        name="modelProvider"
+                        value="ollama"
+                        checked={modelProvider === 'ollama'}
+                        onChange={(e) => setModelProvider(e.target.value)}
+                        style={{ marginRight: '5px' }}
+                    />
+                    Local Ollama (llama3:latest)
+                </label>
+                <label>
+                    <input
+                        type="radio"
+                        name="modelProvider"
+                        value="groq"
+                        checked={modelProvider === 'groq'}
+                        onChange={(e) => setModelProvider(e.target.value)}
+                        style={{ marginRight: '5px' }}
+                    />
+                    Groq API (Cloud)
+                </label>
             </div>
 
             <form onSubmit={handleSubmit}>

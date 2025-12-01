@@ -2,19 +2,33 @@ import re
 import json
 from typing import Tuple, List, Optional
 
-from langchain_ollama import OllamaLLM
+from llm_factory import LLMFactory
 from data_generator import TestDataGenerator
 
 
 
-def parse_selenium_script(script_text: str) -> Tuple[List[dict], Optional[str]]:
+def parse_selenium_script(script_text: str, provider: str = "ollama", model_name: str = None) -> Tuple[List[dict], Optional[str]]:
 
     script_text = script_text or ''
-    llm = OllamaLLM(model="llama3:latest", temperature=0.0)
+    # Only pass model_name for Ollama; Groq uses model from .env
+    if provider == "ollama":
+        llm = LLMFactory.create_llm(provider=provider, model_name=model_name or "llama3:latest", temperature=0.0)
+    else:
+        llm = LLMFactory.create_llm(provider=provider, temperature=0.0)
     # Stronger, more explicit prompt to handle opaque IDs, label->input mapping, Tab sequences, and value-based inference.
     parse_prompt = (
         """You are an expert parser assistant. Given a Selenium-like script (Python or JS), extract all form fields the script interacts with (calls like driver.enter_text, driver.get_text).
-Return ONLY a JSON array. Each item must be an object with keys exactly: name (snake_case), type (one of string,email,phone,pan,ifsc,account_number,postal_code,city,state,address,number,date), rules (short string or empty), description (one-sentence), example (realistic example), confidence (float 0.0-1.0).
+Return ONLY a valid, properly escaped JSON array. Each item must be an object with keys exactly: name (snake_case), type (one of string,email,phone,pan,ifsc,account_number,postal_code,city,state,address,number,date), rules (short string or empty), description (one-sentence), example (realistic example), confidence (float 0.0-1.0).
+
+CRITICAL JSON FORMATTING RULES:
+- Output MUST be valid JSON that can be parsed by standard JSON parsers
+- All string values MUST be properly quoted with double quotes
+- All special characters in strings MUST be properly escaped (e.g., URLs, newlines, quotes)
+- URLs must be complete with proper quotes: "example": "https://example.com/"
+- NO control characters (ASCII < 32) except spaces, tabs, newlines in proper JSON format
+- Ensure ALL JSON string values are closed with matching quotes before the next field
+- Each field must be complete: "example": "complete_value_here" (not truncated)
+- Test that your output is valid JSON before returning it
 
 General instructions and strong heuristics (use these to infer fields even when element IDs are opaque/random):
 - Primary evidence: driver.enter_text('<id>', '<value>', ...). Use the written value to infer type and a sensible name.
@@ -120,9 +134,10 @@ Output:
   "confidence": 0.95
 }]
 
-Now parse the following Selenium script and return the JSON array only.
+IMPORTANT REMINDER: Your output must be ONLY a valid JSON array with properly escaped strings. Ensure all URLs, descriptions, and examples are complete and properly quoted. No control characters, no truncated values.
 
-Selenium script:
+Now parse the following Selenium script and return the JSON array only:
+
 """ + script_text
     )
 
@@ -191,9 +206,59 @@ Selenium script:
       # Clean and attempt to parse
       cleaner = TestDataGenerator()
       json_str = cleaner._clean_json_response(json_str)
+      
+      import re
+      
+      # Step 1: Remove all control characters (ASCII < 32 except \n, \r, \t)
+      cleaned_chars = []
+      for char in json_str:
+        code = ord(char)
+        if code >= 32 or char in '\n\r\t':
+          cleaned_chars.append(char)
+      json_str = ''.join(cleaned_chars)
+      
+      # Step 2: Fix the specific broken pattern from Groq
+      # Pattern: "example": "https: "confidence" (missing closing quote, comma, and rest of URL)
+      # This happens when control char truncates the string value
+      # Look for: ": "text without closing quote before next field
+      
+      # Find all occurrences of incomplete string values
+      # Pattern: ": "[^"]*" "[a-z_]+" where the second quote should be comma+quote
+      json_str = re.sub(
+        r'(:\s*"[^"]*)\s+"([a-z_]+)"\s*:',  # Match: : "value" "nextkey" :
+        r'\1", "\2":',                        # Replace with: : "value", "nextkey":
+        json_str
+      )
+      
+      # Step 3: Normalize whitespace
+      json_str = re.sub(r'  +', ' ', json_str)
 
       try:
-        parsed = json.loads(json_str)
+        # Try with strict=False first to be more lenient
+        parsed = json.loads(json_str, strict=False)
+      except json.JSONDecodeError as e:
+        print(f"JSON parse failed at position {e.pos}: {e.msg}")
+        error_start = max(0, e.pos - 100)
+        error_end = min(len(json_str), e.pos + 100)
+        print(f"Problematic JSON section: {json_str[error_start:error_end]}")
+        
+        # Try to repair common issues
+        try:
+          # Replace any remaining problematic patterns
+          repaired = json_str
+          
+          # Fix incomplete string values before field names
+          # Pattern: "value" "field": should be "value", "field":
+          repaired = re.sub(r'"\s+"([a-z_]+)":\s*', r'", "\1": ', repaired)
+          
+          # Try parsing repaired version
+          parsed = json.loads(repaired, strict=False)
+          print("✓ Parsed successfully after repair")
+        except Exception as repair_error:
+          # Show detailed error context
+          snippet = (source_text or '')[:2000]
+          error_context = json_str[max(0, e.pos - 50):min(len(json_str), e.pos + 50)]
+          return [], f"Failed to JSON-decode parser output: {str(e)}\nError context: ...{error_context}...\nRaw snippet: {snippet}"
       except Exception as e:
         snippet = (source_text or '')[:1500]
         return [], f"Failed to JSON-decode parser output: {str(e)}\nRaw snippet:\n{snippet}"
