@@ -1,11 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from data_generator import TestDataGenerator
-from db_generator import DatabaseTestDataGenerator
-from intelligent_db_generator import IntelligentDatabaseGenerator
-from nl_db_generator import NaturalLanguageDatabaseGenerator
 from langchain_ollama import OllamaLLM
 from selenium_llm_parser import parse_selenium_script
+from selenium_extractor import preprocess_selenium_script
 import json
 import re
 
@@ -89,104 +87,6 @@ async def generate_test_data(request: dict):
         )
 
 
-@app.post("/generate-db")
-async def generate_database(request: dict):
-    try:
-        db_schema = request.get("db_schema")
-        
-        if not db_schema:
-            raise HTTPException(
-                status_code=400,
-                detail="db_schema is required"
-            )
-        
-        tables = db_schema.get("tables", [])
-        if not tables:
-            raise HTTPException(
-                status_code=400,
-                detail="At least one table is required in db_schema"
-            )
-        
-        # Validate each table
-        for i, table in enumerate(tables):
-            if not table.get("table_name"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Table at index {i} is missing 'table_name'"
-                )
-            if not table.get("fields"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Table '{table.get('table_name')}' is missing 'fields'"
-                )
-        
-        # Choose generator based on mode
-        use_intelligent = db_schema.get("use_intelligent_mode", True)
-        model_provider = db_schema.get("model_provider", "ollama")  # "ollama" or "groq"
-        
-        if use_intelligent:
-            print("Using INTELLIGENT mode with AI agents")
-            generator = IntelligentDatabaseGenerator(provider=model_provider)
-        else:
-            print("Using MANUAL mode (requires explicit PK/FK)")
-            generator = DatabaseTestDataGenerator(provider=model_provider)
-        
-        result = generator.generate_database(db_schema)
-        
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating database: {str(e)}"
-        )
-
-
-@app.post("/generate-from-text")
-async def generate_from_natural_language(request: dict):
-    try:
-        user_text = request.get("user_text", "").strip()
-        
-        if not user_text:
-            raise HTTPException(
-                status_code=400,
-                detail="user_text is required and cannot be empty"
-            )
-        
-        if len(user_text) < 20:
-            raise HTTPException(
-                status_code=400,
-                detail="Please provide a more detailed description (at least 20 characters)"
-            )
-        
-        print(f"NATURAL LANGUAGE GENERATION REQUEST")
-        
-        # Get model provider
-        model_provider = request.get("model_provider", "ollama")  # "ollama" or "groq"
-        
-        # Generate database from natural language
-        generator = NaturalLanguageDatabaseGenerator(provider=model_provider)
-        result = generator.generate_from_text(user_text)
-        
-        print(f"\nNatural language generation completed successfully!")
-        
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating from natural language: {str(e)}"
-        ) 
-
-
 @app.post("/generate-from-selenium")
 async def generate_from_selenium(request: dict):
     try:
@@ -201,9 +101,15 @@ async def generate_from_selenium(request: dict):
 
         if not script_text:
             raise HTTPException(status_code=400, detail="selenium_script is required and cannot be empty")
-        # Use the dedicated parser module which encapsulates LLM parsing and fallback logic
+        
+        # STEP 1: Preprocess the Selenium script to extract values
+        print("Preprocessing Selenium script to extract values...")
+        preprocessed_text = preprocess_selenium_script(script_text)
+        print(f"Preprocessed text:\n{preprocessed_text}...")  # Show first 500 chars
+        
+        # STEP 2: Use the dedicated parser module with preprocessed text
         try:
-            parsed_schema, parse_error = parse_selenium_script(script_text, provider=model_provider)
+            parsed_schema, parse_error = parse_selenium_script(preprocessed_text, provider=model_provider)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to parse Selenium script: {str(e)}")
 
@@ -223,7 +129,7 @@ async def generate_from_selenium(request: dict):
 
         print(f"Parsed schema from Selenium script: {parsed_schema}")
 
-        # Otherwise, proceed to generate using the extracted schema
+        # STEP 3: Generate test data using the extracted schema
         generator = TestDataGenerator(provider=model_provider)
         result = generator.generate_data(
             schema_fields=parsed_schema,

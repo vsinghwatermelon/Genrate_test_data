@@ -142,6 +142,8 @@ class TestDataGenerator:
                 - Start your response directly with [ and end with ]
                 - Each record must be a valid JSON object with proper commas and quotes.
                 - Values must be unique and realistic.
+                - And not genrate any thing extra then the json array(recods).
+                - Dont send responce this <think> only the reponce 
                 - Example structure:
                 [
                 {{ {', '.join([f'"{name}": "valid_value_example_{i+1}"' for i, name in enumerate(field_names)])}, "is_valid": true }},
