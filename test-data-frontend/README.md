@@ -8,6 +8,8 @@ Simple React app to interact with the Test Data Generator API.
 ```bash
 cd /Users/vinayak/Desktop/Watermelon/TestData
 source myenv/bin/activate
+. .\.venv\Scripts\Activate.ps1
+deactivate
 python -m uvicorn main:app --reload
 ```
 

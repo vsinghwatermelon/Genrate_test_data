@@ -15,9 +15,12 @@ def parse_selenium_script(script_text: str, provider: str = "ollama", model_name
         llm = LLMFactory.create_llm(provider=provider, model_name=model_name or "llama3:latest", temperature=0.0)
     else:
         llm = LLMFactory.create_llm(provider=provider, temperature=0.0)
-    # Stronger, more explicit prompt to handle opaque IDs, label->input mapping, Tab sequences, and value-based inference.
+    # Stronger, more explicit prompt to handle extracted values and contextual information.
     parse_prompt = (
-        """You are an expert parser assistant. Given a Selenium-like script (Python or JS), extract all form fields the script interacts with (calls like driver.enter_text, driver.get_text).
+        """You are an expert parser assistant. You will receive EXTRACTED FIELD VALUES from a Selenium form automation script, along with optional contextual information (labels, tab sections).
+
+Your task: Analyze each extracted value and infer the form field's name, type, and other properties.
+
 Return ONLY a valid, properly escaped JSON array. Each item must be an object with keys exactly: name (snake_case), type (one of string,email,phone,pan,ifsc,account_number,postal_code,city,state,address,number,date), rules (short string or empty), description (one-sentence), example (realistic example), confidence (float 0.0-1.0).
 
 CRITICAL JSON FORMATTING RULES:
@@ -30,92 +33,86 @@ CRITICAL JSON FORMATTING RULES:
 - Each field must be complete: "example": "complete_value_here" (not truncated)
 - Test that your output is valid JSON before returning it
 
-General instructions and strong heuristics (use these to infer fields even when element IDs are opaque/random):
-- Primary evidence: driver.enter_text('<id>', '<value>', ...). Use the written value to infer type and a sensible name.
-- Label mapping: If you see driver.get_text(id) or (often on a label) immediately before an enter_text call (within the next 1-3 interactions), treat the label text as the field label for that enter_text.
-- Tab-based mapping: If the script uses press_key('Tab') between enter_text calls, and there is no explicit label, map the two enter_texts as adjacent fields. Use value patterns and ordering to name them. Common sequence heuristics:
-  - If first looks like a personal name and second looks like a surname, name them first_name and last_name (or first_name/last_name).
-  - If a field value contains '@' -> email. If numeric >=10 digits -> phone. If 6 consecutive digits -> postal_code. If matches date formats -> date.
-- switch_Tab or switch_Tab text: treat the visible tab title or switch target as contextual text that can indicate section or label meaning near subsequent inputs.
-- If identifiers contain readable tokens (email, phone, name, dob, zip, addr, pan, ifsc, acct, amount), prefer those as the canonical field name (convert to snake_case).
-- When only a value exists, infer name from value pattern or from nearby textual context (get_text, switch_Tab, surrounding comments).
-- For addresses: values containing street tokens (Lane, St, Road, Apt, #, comma-separated address) -> address.
-- For currency/amounts: values with commas and digits or currency symbols -> number.
-- For PAN/IFSC/account_number: follow the patterns:
-  - pan: 10-char Indian PAN pattern (5 letters + 4 digits + 1 letter) -> pan
-  - ifsc: 11-char (4 letters + 0 + 6 alnum) -> ifsc
-  - account_number: long numeric string (8+ digits) without IFSC/PAN pattern
-- Confidence scoring rules:
-  - 0.95+ for exact pattern matches or explicit identifier hints (email pattern, PAN, IFSC, explicit label token).
-  - ~0.8 for strong contextual matches (label->input, get_text mapping).
-  - ~0.6 for reasonable inference from value alone.
-  - ~0.4 for weak guesses or ambiguous mapping.
-- Naming rules: produce short, canonical snake_case names. Map common labels to canonical names: email -> email, phone -> phone, first name -> first_name, last name -> last_name, name/fullname -> name, dob/birthdate -> date_of_birth or date, zip/postal -> postal_code, city/state/address/amount/account_number/pan/ifsc as appropriate.
-- Always produce realistic example values in the example field (use the actual value from the script when given).
-- Return a JSON array only. No extra text, explanation, or markup. Ensure confidence is a float.
+INFERENCE RULES - Analyze each value to determine field type and name:
+- Email pattern (contains @): type=email, name=email
+- Phone pattern (10+ digits): type=phone, name=phone
+- PAN pattern (5 letters + 4 digits + 1 letter, 10 chars): type=pan, name=pan
+- IFSC pattern (4 letters + 0 + 6 alphanumeric, 11 chars): type=ifsc, name=ifsc
+- Account number (8+ digits, not PAN/IFSC): type=account_number, name=account_number
+- Postal/ZIP code (6 consecutive digits): type=postal_code, name=postal_code
+- Date patterns (DD/MM/YYYY, YYYY-MM-DD, etc.): type=date, name=date or date_of_birth
+- Address (contains street indicators: Lane, St, Road, Apt, #, comma-separated): type=address, name=address
+- Currency/Amount (digits with commas, currency symbols): type=number, name=amount
+- City names (common city names): type=city, name=city
+- State names (common state names/abbreviations): type=state, name=state
+- Names in sequence: first value -> first_name, second value -> last_name
+- Generic text: type=string, infer name from context or use descriptive name
 
-FEW-SHOT EXAMPLES (demonstrating opaque IDs and tab inference):
+CONTEXTUAL HINTS:
+- If labels are provided, use them to refine field names (e.g., "Contact Email" -> email)
+- If tab sections are mentioned, use them to add context to descriptions
+- Use the order of values to infer related fields (e.g., first_name followed by last_name)
 
-Example A - explicit ids:
-Script:
-driver.enter_text('input_email', 'user@example.com', 0, False)
+CONFIDENCE SCORING:
+- 0.95+ for exact pattern matches (email @, PAN/IFSC pattern, explicit phone digits)
+- 0.85-0.90 for strong contextual matches (label hints, clear address/city patterns)
+- 0.70-0.80 for reasonable inference from value patterns
+- 0.50-0.65 for generic strings with minimal context
+
+NAMING CONVENTIONS:
+- Use snake_case for all field names
+- Use canonical names: email, phone, first_name, last_name, date_of_birth, postal_code, city, state, address, amount, pan, ifsc, account_number
+- Keep names short and descriptive
+
+FEW-SHOT EXAMPLES:
+
+Example A - Email value:
+Input:
+1. user@example.com
 Output:
 [{
   "name": "email",
   "type": "email",
   "rules": "",
-  "description": "Email address used for login/contact.",
+  "description": "Email address for contact or login.",
   "example": "user@example.com",
   "confidence": 0.98
 }]
 
-Example B - opaque ids with get_text label:
-Script:
-driver.get_text('label_23')  # text: "Contact Email"
-driver.enter_text('rnd_abc_1', 'alice@company.com', 0, False)
-Output:
-[{
-  "name": "email",
-  "type": "email",
-  "rules": "",
-  "description": "Contact email address.",
-  "example": "alice@company.com",
-  "confidence": 0.95
-}]
-
-Example C - opaque ids + Tab sequence (name pair):
-Script:
-driver.enter_text('fld_a1', 'John', 0, False)
-driver.press_key('Tab')
-driver.enter_text('fld_a2', 'Doe', 0, False)
+Example B - Name sequence:
+Input:
+1. John
+2. Doe
 Output:
 [{
   "name": "first_name",
   "type": "string",
   "rules": "",
-  "description": "Person's given/first name.",
+  "description": "Person's first name.",
   "example": "John",
-  "confidence": 0.8
+  "confidence": 0.80
 }, {
   "name": "last_name",
   "type": "string",
   "rules": "",
-  "description": "Person's family/last name.",
+  "description": "Person's last name.",
   "example": "Doe",
-  "confidence": 0.8
+  "confidence": 0.80
 }]
 
-Example D - opaque ids + amount/address/phone inference:
-Script:
-driver.enter_text('xyz1', '100,000', 0, False)
-driver.enter_text('xyz2', '123, jane lane', 0, False)
-driver.enter_text('xyz3', '9898988787', 0, False)
+Example C - Financial data:
+Input:
+1. 100,000
+2. 123, jane lane
+3. 9898988787
+4. ABCDE1234F
+5. HDFC0001234
 Output:
 [{
   "name": "amount",
   "type": "number",
   "rules": "numeric/currency",
-  "description": "Transaction amount.",
+  "description": "Transaction or account amount.",
   "example": "100,000",
   "confidence": 0.88
 }, {
@@ -124,19 +121,57 @@ Output:
   "rules": "",
   "description": "Full street address.",
   "example": "123, jane lane",
-  "confidence": 0.9
+  "confidence": 0.90
 }, {
   "name": "phone",
   "type": "phone",
-  "rules": ">=10 digits",
+  "rules": "10 digits",
   "description": "Contact phone number.",
   "example": "9898988787",
   "confidence": 0.95
+}, {
+  "name": "pan",
+  "type": "pan",
+  "rules": "10 chars: 5 letters + 4 digits + 1 letter",
+  "description": "PAN card number.",
+  "example": "ABCDE1234F",
+  "confidence": 0.98
+}, {
+  "name": "ifsc",
+  "type": "ifsc",
+  "rules": "11 chars: 4 letters + 0 + 6 alphanumeric",
+  "description": "Bank IFSC code.",
+  "example": "HDFC0001234",
+  "confidence": 0.98
+}]
+
+Example D - With contextual labels:
+Input:
+1. alice@company.com
+2. New York
+Additional context:
+Labels found: Contact Email, City
+
+Output:
+[{
+  "name": "email",
+  "type": "email",
+  "rules": "",
+  "description": "Contact email address.",
+  "example": "alice@company.com",
+  "confidence": 0.95
+}, {
+  "name": "city",
+  "type": "city",
+  "rules": "",
+  "description": "City name.",
+  "example": "New York",
+  "confidence": 0.92
 }]
 
 IMPORTANT REMINDER: Your output must be ONLY a valid JSON array with properly escaped strings. Ensure all URLs, descriptions, and examples are complete and properly quoted. No control characters, no truncated values.
 
-Now parse the following Selenium script and return the JSON array only:
+Now analyze the following extracted values and return the JSON array only:
 
 """ + script_text
     )

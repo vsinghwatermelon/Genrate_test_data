@@ -673,3 +673,120 @@ form {
     color: white;
     border-color: #764ba2;
 }
+/* Group Breakdown Styles */
+.group-breakdown {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 2px solid #3498db;
+}
+
+.group-breakdown h3 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    font-size: 1.2rem;
+}
+
+.group-summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 15px;
+}
+
+.group-card {
+    background: white;
+    border-radius: 6px;
+    padding: 15px;
+    border-left: 4px solid #3498db;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s;
+}
+
+.group-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.group-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ecf0f1;
+}
+
+.group-card-header strong {
+    color: #2c3e50;
+    font-size: 1.1rem;
+}
+
+.group-count-badge {
+    background: #3498db;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.group-card-fields {
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.group-card-fields.correct {
+    background: #d5f4e6;
+    border-left: 3px solid #27ae60;
+}
+
+.group-card-fields.wrong {
+    background: #fadbd8;
+    border-left: 3px solid #e74c3c;
+}
+
+.group-card-fields .field-label {
+    font-weight: 600;
+    margin-right: 8px;
+}
+
+.group-card-fields.correct .field-label {
+    color: #27ae60;
+}
+
+.group-card-fields.wrong .field-label {
+    color: #e74c3c;
+}
+
+.group-card-fields .field-list {
+    color: #555;
+}
+
+/* Metadata Note */
+.metadata-note {
+    background: #fff3cd;
+    border-left: 4px solid #ffc107;
+    padding: 12px 16px;
+    margin: 10px 0 20px 0;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    color: #856404;
+}
+
+.metadata-note strong {
+    color: #856404;
+    margin-right: 8px;
+}
+
+.metadata-note code {
+    background: #fff;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    color: #d63384;
+    font-size: 0.85rem;
+    margin: 0 3px;
+}

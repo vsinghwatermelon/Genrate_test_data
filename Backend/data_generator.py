@@ -4,6 +4,7 @@ import json
 import re
 import sys
 from llm_factory import LLMFactory
+from group_data_generator import GroupDataGenerator
 
 
 def _safe_print(text: str) -> None:
@@ -33,19 +34,80 @@ class TestDataGenerator:
         else:
             self.llm = LLMFactory.create_llm(provider=provider, temperature=0.7)
 
+    def _build_group_instructions(self, groups: list, schema_fields: list) -> str:
+        """Build instructions for group-based data generation.
+        
+        Args:
+            groups: List of group configs, e.g.:
+                [{
+                    "name": "G1",
+                    "count": 5,
+                    "correct_fields": ["col1", "col2"],  # These fields must be valid
+                    "wrong_fields": ["col3", "col4"]      # These fields must be invalid
+                }]
+            schema_fields: List of field definitions
+        
+        Returns:
+            Formatted instruction string for the prompt
+        """
+        instructions = []
+        record_offset = 0
+        
+        for i, group in enumerate(groups, 1):
+            group_name = group.get('name', f'Group{i}')
+            count = group.get('count', 0)
+            correct_fields = group.get('correct_fields', [])
+            wrong_fields = group.get('wrong_fields', [])
+            
+            start_idx = record_offset + 1
+            end_idx = record_offset + count
+            record_offset = end_idx
+            
+            group_inst = f"\n                === {group_name} (Records {start_idx}-{end_idx}) ===\n"
+            group_inst += f"                Generate {count} records where:\n"
+            
+            if correct_fields:
+                group_inst += f"                ✓ CORRECT/VALID fields: {', '.join(correct_fields)}\n"
+                group_inst += f"                  These fields MUST follow all schema rules perfectly.\n"
+            
+            if wrong_fields:
+                group_inst += f"                ✗ INCORRECT/INVALID fields: {', '.join(wrong_fields)}\n"
+                group_inst += f"                  These fields MUST clearly violate their schema rules.\n"
+                group_inst += f"                  Use different violation types for each record (wrong type, wrong format, too long/short, etc.)\n"
+            
+            if not correct_fields and not wrong_fields:
+                group_inst += f"                All fields should be VALID (follow schema rules).\n"
+            
+            group_inst += f"                Set is_valid = {str(len(wrong_fields) == 0).lower()} for all records in this group.\n"
+            
+            instructions.append(group_inst)
+        
+        return ''.join(instructions)
+
     def _create_prompt(
         self, 
         schema_fields: list, 
-        num_records: int, 
-        correct_num_records: int, 
-        wrong_num_records: int, 
+        num_records: int = None,  # Optional, calculated from groups
+        correct_num_records: int = None,  # Legacy parameter
+        wrong_num_records: int = None,  # Legacy parameter
         additional_rules: str = None, 
-        parent_tables_data: dict = None
+        parent_tables_data: dict = None,
+        groups: list = None  # NEW: Group-based configuration
     ) -> str:
         
         field_names = [field.get('name', '') for field in schema_fields if field.get('name')]
-        valid_count = correct_num_records
-        invalid_count = wrong_num_records
+        
+        # Support both legacy and new group-based approach
+        if groups:
+            # New group-based approach
+            total_records = sum(g.get('count', 0) for g in groups)
+            group_instructions = self._build_group_instructions(groups, schema_fields)
+        else:
+            # Legacy approach (backward compatibility)
+            total_records = num_records or (correct_num_records + wrong_num_records)
+            valid_count = correct_num_records
+            invalid_count = wrong_num_records
+            group_instructions = None
 
         # Build field details with type, rules, and examples
         field_details = []
@@ -82,7 +144,7 @@ class TestDataGenerator:
                             parent_tables_context += f"                Available {parent_table_name}.{key} values: {', '.join(unique_values)}\n"
                 parent_tables_context += "\n"
 
-        prompt = f"""You are an expert test data generator and validator. Your task is to generate {num_records} UNIQUE, DIVERSE, and REALISTIC test data records.
+        prompt = f"""You are an expert test data generator and validator. Your task is to generate {total_records} UNIQUE, DIVERSE, and REALISTIC test data records.
 
                 SCHEMA DEFINITION:
                 {chr(10).join(field_details)}
@@ -98,11 +160,12 @@ class TestDataGenerator:
                 - Each valid and invalid record must differ clearly from the others.
                 {f"- **CRITICAL**: If parent table data is provided above, you MUST use those ACTUAL values (e.g., actual department names, actual IDs) to maintain referential integrity and logical consistency between tables." if parent_tables_data else ""}
 
-                2. RECORD COUNT:
-                - Generate EXACTLY {num_records} total records.
-                - First {valid_count} records → STRICTLY VALID (is_valid = true)
+                2. RECORD COUNT & GROUPS:
+                - Generate EXACTLY {total_records} total records.
+                {group_instructions if group_instructions else f'''- First {valid_count} records → STRICTLY VALID (is_valid = true)
                 - Next {invalid_count} records → CLEARLY INVALID (is_valid = false)
-                - Maintain this exact order in output.
+                - Maintain this exact order in output.'''}
+
 
                 3. STRUCTURE:
                 - Each record must include ALL {len(field_names)} fields: {', '.join(field_names)}
@@ -143,7 +206,7 @@ class TestDataGenerator:
                 - Each record must be a valid JSON object with proper commas and quotes.
                 - Values must be unique and realistic.
                 - And not genrate any thing extra then the json array(recods).
-                - Dont send responce this <think> only the reponce 
+                - Dont send responce this <think> only the reponce json array.
                 - Example structure:
                 [
                 {{ {', '.join([f'"{name}": "valid_value_example_{i+1}"' for i, name in enumerate(field_names)])}, "is_valid": true }},
@@ -229,9 +292,25 @@ class TestDataGenerator:
         correct_num_records: int = 5, 
         wrong_num_records: int = 0, 
         additional_rules: str = None, 
-        parent_tables_data: dict = None
+        parent_tables_data: dict = None,
+        groups: list = None  # NEW: Group-based configuration
     ) -> dict:
         try:
+            # If groups provided, use the specialized GroupDataGenerator
+            if groups and len(groups) > 0:
+                group_generator = GroupDataGenerator(provider=self.provider)
+                return group_generator.generate_groups(
+                    schema_fields=schema_fields,
+                    groups=groups,
+                    additional_rules=additional_rules,
+                    parent_tables_data=parent_tables_data
+                )
+            
+            # Legacy mode: generate all at once
+            # Calculate total records from groups if provided
+            if groups:
+                num_records = sum(g.get('count', 0) for g in groups)
+            
             # Create prompt
             prompt = self._create_prompt(
                 schema_fields, 
@@ -239,7 +318,8 @@ class TestDataGenerator:
                 correct_num_records, 
                 wrong_num_records, 
                 additional_rules, 
-                parent_tables_data
+                parent_tables_data,
+                groups  # Pass groups to prompt
             )
 
             print(f"\n--- PROMPT SENT TO LLM ---")

@@ -50,9 +50,15 @@ async def generate_test_data(request: dict):
     try:
         # Extract parameters
         schema_fields = request.get("schema_fields", [])
+        
+        # NEW: Support group-based generation
+        groups = request.get("groups")  # Optional: [{name, count, correct_fields, wrong_fields}]
+        
+        # Legacy parameters (for backward compatibility)
         num_records = request.get("num_records", 5)
         correct_num_records = request.get("correct_num_records", 5)
         wrong_num_records = request.get("wrong_num_records", 0)
+        
         additional_rules = request.get("additional_rules")
         model_provider = request.get("model_provider", "ollama")  # "ollama" or "groq"
 
@@ -70,7 +76,8 @@ async def generate_test_data(request: dict):
             num_records=num_records,
             correct_num_records=correct_num_records,
             wrong_num_records=wrong_num_records,
-            additional_rules=additional_rules
+            additional_rules=additional_rules,
+            groups=groups  # Pass groups if provided
         )
 
         return {
@@ -91,9 +98,15 @@ async def generate_test_data(request: dict):
 async def generate_from_selenium(request: dict):
     try:
         script_text = request.get("selenium_script", "").strip()
+        
+        # NEW: Support group-based generation
+        groups = request.get("groups")
+        
+        # Legacy parameters
         num_records = request.get("num_records", 5)
         correct_num_records = request.get("correct_num_records", num_records)
         wrong_num_records = request.get("wrong_num_records", 0)
+        
         additional_rules = request.get("additional_rules")
         # If client only wants parsing (no generation), set parse_only=True
         parse_only = request.get("parse_only", False)
@@ -105,7 +118,7 @@ async def generate_from_selenium(request: dict):
         # STEP 1: Preprocess the Selenium script to extract values
         print("Preprocessing Selenium script to extract values...")
         preprocessed_text = preprocess_selenium_script(script_text)
-        print(f"Preprocessed text:\n{preprocessed_text}...")  # Show first 500 chars
+        print(f"Preprocessed text:\n{preprocessed_text}...") 
         
         # STEP 2: Use the dedicated parser module with preprocessed text
         try:
@@ -136,7 +149,8 @@ async def generate_from_selenium(request: dict):
             num_records=num_records,
             correct_num_records=correct_num_records,
             wrong_num_records=wrong_num_records,
-            additional_rules=additional_rules
+            additional_rules=additional_rules,
+            groups=groups  # Pass groups if provided
         )
 
         response_payload = {
