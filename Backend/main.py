@@ -55,6 +55,24 @@ app.add_middleware(
 
 
 # =============================================================================
+# STARTUP/SHUTDOWN EVENTS
+# =============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize on startup."""
+    print("🚀 Server starting...")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up on shutdown."""
+    print("🛑 Server shutting down...")
+
+
+
+
+# =============================================================================
 # EXCEPTION HANDLERS
 # =============================================================================
 

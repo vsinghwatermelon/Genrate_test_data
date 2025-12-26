@@ -15,6 +15,7 @@ import TypeModal from './components/TypeModal';
 import allDataTypes from './data/allDataTypes';
 import FieldEditor from './components/FieldEditor';
 import GroupEditor from './components/GroupEditor';
+import GroupEditModal from './components/GroupEditModal';
 import * as XLSX from 'xlsx';
 
 function App() {
@@ -68,6 +69,13 @@ function App() {
     const [viewMode, setViewMode] = useState('json');
     const [selectedTable, setSelectedTable] = useState(null);
     const [modelProvider, setModelProvider] = useState('ollama'); // 'ollama' or 'groq'
+
+    // Group edit modal state
+    const [showGroupEditModal, setShowGroupEditModal] = useState(false);
+    const [editingGroup, setEditingGroup] = useState(null);
+    const [editingGroupIndex, setEditingGroupIndex] = useState(null);
+    const [regeneratingGroup, setRegeneratingGroup] = useState(false);
+    const [generatedSchema, setGeneratedSchema] = useState(null); // Store schema used for generation
 
     // ========================================================================
     // SINGLE TABLE MODE - Field Management
@@ -160,6 +168,103 @@ function App() {
         const updated = [...parsedGroups];
         updated[index][key] = value;
         setParsedGroups(updated);
+    };
+
+    // ========================================================================
+    // GROUP EDIT MODAL HANDLERS (for regenerating group data)
+    // ========================================================================
+    const handleEditGroupClick = (groupData, index) => {
+        setEditingGroup(groupData);
+        setEditingGroupIndex(index);
+        setShowGroupEditModal(true);
+    };
+
+    const handleGroupEditSave = async (editMode, updatedGroup, prompt) => {
+        setRegeneratingGroup(true);
+        setError('');
+
+        try {
+            // Use the schema that was used for generation, or fall back to current fields
+            const schemaToUse = generatedSchema && generatedSchema.length > 0 ? generatedSchema : fields;
+            
+            // Filter out fields with empty names before sending
+            const validFields = schemaToUse.filter(f => f.name && f.name.trim() !== '');
+            
+            if (validFields.length === 0) {
+                throw new Error('No valid fields defined. Please add at least one field with a name.');
+            }
+
+            // Build the payload to regenerate ONLY this specific group
+            const payload = {
+                schema_fields: validFields,  // Backend expects 'schema_fields' with valid field names
+                groups: [{
+                    name: updatedGroup.name,
+                    count: updatedGroup.count,
+                    correct_fields: updatedGroup.correct_fields,
+                    wrong_fields: updatedGroup.wrong_fields
+                }],
+                // For prompt mode, use the prompt; for manual mode, use empty string
+                additional_rules: editMode === 'prompt' ? prompt : '',
+                model_provider: modelProvider
+            };
+
+            console.log('Sending payload:', JSON.stringify(payload, null, 2));
+
+            const res = await fetch('http://localhost:8000/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                const errorMsg = typeof data.detail === 'string' 
+                    ? data.detail 
+                    : data.message || JSON.stringify(data.detail) || 'Failed to regenerate group';
+                throw new Error(errorMsg);
+            }
+
+            const newGroupData = await res.json();
+
+            // Update the response by replacing ONLY the old group's data with new data
+            if (response && response.data && response.groups) {
+                const oldGroupName = editingGroup.group_name;
+                
+                // Filter out ONLY the records from the group being edited
+                const filteredData = response.data.filter(
+                    record => record._group !== oldGroupName
+                );
+                
+                // Add the newly generated data for this group
+                const updatedData = [...filteredData, ...newGroupData.data];
+
+                // Update the group breakdown info for this specific group
+                const updatedGroups = [...response.groups];
+                updatedGroups[editingGroupIndex] = {
+                    group_name: updatedGroup.name,
+                    count: newGroupData.count,
+                    correct_fields: updatedGroup.correct_fields,
+                    wrong_fields: updatedGroup.wrong_fields
+                };
+
+                setResponse({
+                    ...response,
+                    data: updatedData,
+                    count: updatedData.length,
+                    groups: updatedGroups
+                });
+            }
+
+            setShowGroupEditModal(false);
+            setEditingGroup(null);
+            setEditingGroupIndex(null);
+        } catch (err) {
+            console.error('Group regeneration error:', err);
+            const errorMsg = err.message || String(err) || 'Unknown error occurred';
+            setError(`Failed to regenerate group: ${errorMsg}`);
+        } finally {
+            setRegeneratingGroup(false);
+        }
     };
 
     // ==================== Selenium parse/confirm helpers ====================
@@ -401,6 +506,12 @@ function App() {
 
             const data = await res.json();
             setResponse(data);
+            
+            // Store the schema that was used for this generation
+            if (mode === 'single') {
+                const validFields = fields.filter(f => f.name);
+                setGeneratedSchema(validFields);
+            }
 
             if (false) { // Database mode removed
                 const firstTable = Object.keys(data.tables)[0];
@@ -734,8 +845,17 @@ function App() {
                                     {response.groups.map((grp, idx) => (
                                         <div key={idx} className="group-card">
                                             <div className="group-card-header">
-                                                <strong>{grp.group_name}</strong>
-                                                <span className="group-count-badge">{grp.count} records</span>
+                                                <div className="group-card-title">
+                                                    <strong>{grp.group_name}</strong>
+                                                    <span className="group-count-badge">{grp.count} records</span>
+                                                </div>
+                                                <button 
+                                                    className="edit-group-btn"
+                                                    onClick={() => handleEditGroupClick(grp, idx)}
+                                                    title="Edit and regenerate this group"
+                                                >
+                                                    ✏️ Edit
+                                                </button>
                                             </div>
                                             {grp.correct_fields && grp.correct_fields.length > 0 && (
                                                 <div className="group-card-fields correct">
@@ -794,6 +914,18 @@ function App() {
                 onClose={() => setShowTypeModal(false)}
                 types={allDataTypes}
                 onSelect={handleTypeSelect}
+            />
+            <GroupEditModal
+                show={showGroupEditModal}
+                group={editingGroup}
+                fields={fields}
+                onClose={() => {
+                    setShowGroupEditModal(false);
+                    setEditingGroup(null);
+                    setEditingGroupIndex(null);
+                }}
+                onSave={handleGroupEditSave}
+                loading={regeneratingGroup}
             />
         </div>
     );

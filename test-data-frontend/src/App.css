@@ -717,6 +717,12 @@ form {
     border-bottom: 1px solid #ecf0f1;
 }
 
+.group-card-title {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
 .group-card-header strong {
     color: #2c3e50;
     font-size: 1.1rem;
@@ -729,6 +735,27 @@ form {
     border-radius: 12px;
     font-size: 0.85rem;
     font-weight: 600;
+}
+
+.edit-group-btn {
+    background: #9b59b6;
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.edit-group-btn:hover {
+    background: #8e44ad;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(155, 89, 182, 0.3);
 }
 
 .group-card-fields {
