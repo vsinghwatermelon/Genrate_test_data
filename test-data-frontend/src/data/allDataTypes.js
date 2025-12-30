@@ -75,7 +75,10 @@ const allDataTypes = [
     { id: 'hex_color', name: 'Hex Color', category: 'Misc', description: 'Hexadecimal color code.', example: '#ff5733' },
     { id: 'boolean', name: 'Boolean', category: 'Misc', description: 'True/False value.', example: 'true' },
     { id: 'integer', name: 'Integer', category: 'Misc', description: 'Integer number.', example: '42' },
-    { id: 'float', name: 'Float', category: 'Misc', description: 'Floating point number.', example: '3.1415' }
+    { id: 'float', name: 'Float', category: 'Misc', description: 'Floating point number.', example: '3.1415' },
+    { id: 'select', name: 'Dropdown (Select)', category: 'Form', description: 'One option from a list.', example: 'Option A' },
+    { id: 'radio', name: 'Radio Button', category: 'Form', description: 'Single selection from a group.', example: 'Yes' },
+    { id: 'checkbox', name: 'Checkbox', category: 'Form', description: 'Multiple selection or boolean.', example: 'Checked' }
 ];
 
 export default allDataTypes;

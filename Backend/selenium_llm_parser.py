@@ -48,7 +48,10 @@ def parse_selenium_script(
     
     try:
         # Invoke LLM
+        print(f"DEBUG: Prompt sent to LLM ({len(prompt)} chars)")
         response = llm.invoke(prompt)
+        print(f"DEBUG: Raw LLM Response:\n{response}")
+        print("-" * 40)
         
         # Parse response
         parsed_fields, error = _parse_response(response)
@@ -108,8 +111,15 @@ def _parse_response(response: str) -> Tuple[List[Dict[str, Any]], Optional[str]]
     normalized = _normalize_fields(parsed)
     
     if not normalized:
-        snippet = source_text[:1500] if source_text else ''
-        return [], f"No fields parsed from LLM output. Raw snippet:\n{snippet}"
+        # If the result is a valid empty list, we should probably return it as is,
+        # but warn the user that no fields were found.
+        # However, if the source text was effectively empty or garbage, that's an error.
+        if parsed == []:
+            safe_print("Warning: LLM returned an empty list of fields.")
+            return [], None
+            
+        snippet = source_text[:2000] if source_text else ''
+        return [], f"No valid fields found in LLM output. Raw snippet:\n{snippet}"
     
     return normalized, None
 
