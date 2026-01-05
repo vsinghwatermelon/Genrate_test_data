@@ -22,12 +22,14 @@ function GroupEditModal({ show, group, fields, onClose, onSave, loading }) {
     const [wrongFields, setWrongFields] = useState([]);
     const [recordCount, setRecordCount] = useState(5);
     const [prompt, setPrompt] = useState('');
+    const [wrongFieldRules, setWrongFieldRules] = useState({});
 
     // Reset state when modal opens with new group
     useEffect(() => {
         if (show && group) {
             setCorrectFields(group.correct_fields || []);
             setWrongFields(group.wrong_fields || []);
+            setWrongFieldRules(group.wrong_field_rules || {});
             setRecordCount(group.count || 5);
             setPrompt('');
             setEditMode('manual');
@@ -54,6 +56,16 @@ function GroupEditModal({ show, group, fields, onClose, onSave, loading }) {
         }
     };
 
+    const handleWrongRuleChange = (fieldName, value) => {
+        const rules = { ...wrongFieldRules };
+        if (value) {
+            rules[fieldName] = value;
+        } else {
+            delete rules[fieldName];
+        }
+        setWrongFieldRules(rules);
+    };
+
     const handleSave = () => {
         if (editMode === 'manual') {
             const updatedGroup = {
@@ -61,7 +73,8 @@ function GroupEditModal({ show, group, fields, onClose, onSave, loading }) {
                 name: group.group_name,
                 count: recordCount,
                 correct_fields: correctFields,
-                wrong_fields: wrongFields
+                wrong_fields: wrongFields,
+                wrong_field_rules: wrongFieldRules
             };
             onSave('manual', updatedGroup, null);
         } else {
@@ -70,7 +83,8 @@ function GroupEditModal({ show, group, fields, onClose, onSave, loading }) {
                 name: group.group_name,
                 count: recordCount,
                 correct_fields: correctFields,
-                wrong_fields: wrongFields
+                wrong_fields: wrongFields,
+                wrong_field_rules: wrongFieldRules
             };
             onSave('prompt', updatedGroup, prompt);
         }
@@ -103,7 +117,7 @@ function GroupEditModal({ show, group, fields, onClose, onSave, loading }) {
 
                 <div className="modal-body">
                     <div className="edit-info-banner">
-                        ℹ️ You are editing only <strong>{group.group_name}</strong>'s data. 
+                        ℹ️ You are editing only <strong>{group.group_name}</strong>'s data.
                         All other groups will remain unchanged.
                     </div>
 
@@ -179,6 +193,15 @@ function GroupEditModal({ show, group, fields, onClose, onSave, loading }) {
                                                 onChange={() => handleFieldToggle(field.name, 'wrong')}
                                             />
                                         </label>
+                                        {wrongFields.includes(field.name) && (
+                                            <input
+                                                type="text"
+                                                placeholder="e.g. invalid email, empty"
+                                                style={{ marginLeft: 8, width: 180 }}
+                                                value={wrongFieldRules[field.name] || ''}
+                                                onChange={e => handleWrongRuleChange(field.name, e.target.value)}
+                                            />
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -213,8 +236,8 @@ function GroupEditModal({ show, group, fields, onClose, onSave, loading }) {
                     <button className="cancel-btn" onClick={onClose} disabled={loading}>
                         Cancel
                     </button>
-                    <button 
-                        className="save-btn" 
+                    <button
+                        className="save-btn"
                         onClick={handleSave}
                         disabled={loading || (editMode === 'prompt' && !prompt.trim())}
                     >

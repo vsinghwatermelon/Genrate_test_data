@@ -91,6 +91,7 @@ class GroupConfig(BaseModel):
     count: int = Field(..., ge=0, description="Number of records to generate")
     correct_fields: List[str] = Field(default_factory=list, description="Fields that must be valid")
     wrong_fields: List[str] = Field(default_factory=list, description="Fields that must be invalid")
+    wrong_field_rules: Optional[Dict[str, str]] = Field(default_factory=dict, description="User-specified rules for what should be wrong in each field")
 
 
 # =============================================================================

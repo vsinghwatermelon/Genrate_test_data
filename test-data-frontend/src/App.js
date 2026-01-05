@@ -27,13 +27,13 @@ function App() {
 
     // Single table mode state
     const [fields, setFields] = useState([{ name: '', type: 'string', rules: '', example: '' }]);
-    
+
     // NEW: Group-based generation mode toggle
     const [useGroups, setUseGroups] = useState(false);
     const [groups, setGroups] = useState([
-        { name: 'G1', count: 5, correct_fields: [], wrong_fields: [] }
+        { name: 'G1', count: 5, correct_fields: [], wrong_fields: [], wrong_field_rules: {} }
     ]);
-    
+
     // Legacy: Simple correct/wrong counts (when not using groups)
     const [numRecords, setNumRecords] = useState(5);
     const [correctNumRecords, setCorrectNumRecords] = useState(5);
@@ -49,13 +49,13 @@ function App() {
     // Selenium parse-review-confirm flow
     const [parsedSchema, setParsedSchema] = useState(null);
     const [parsedFields, setParsedFields] = useState(null);
-    
+
     // NEW: Group-based for parsed/selenium mode
     const [parsedUseGroups, setParsedUseGroups] = useState(false);
     const [parsedGroups, setParsedGroups] = useState([
-        { name: 'G1', count: 5, correct_fields: [], wrong_fields: [] }
+        { name: 'G1', count: 5, correct_fields: [], wrong_fields: [], wrong_field_rules: {} }
     ]);
-    
+
     // Legacy parsed mode
     const [parsedNumRecords, setParsedNumRecords] = useState(5);
     const [parsedCorrectNumRecords, setParsedCorrectNumRecords] = useState(5);
@@ -130,11 +130,12 @@ function App() {
     // GROUP MANAGEMENT (for single table mode)
     // ========================================================================
     const addGroup = () => {
-        setGroups([...groups, { 
-            name: `G${groups.length + 1}`, 
-            count: 1, 
-            correct_fields: [], 
-            wrong_fields: [] 
+        setGroups([...groups, {
+            name: `G${groups.length + 1}`,
+            count: 1,
+            correct_fields: [],
+            wrong_fields: [],
+            wrong_field_rules: {}
         }]);
     };
 
@@ -152,11 +153,12 @@ function App() {
     // GROUP MANAGEMENT (for parsed/selenium mode)
     // ========================================================================
     const addParsedGroup = () => {
-        setParsedGroups([...parsedGroups, { 
-            name: `G${parsedGroups.length + 1}`, 
-            count: 1, 
-            correct_fields: [], 
-            wrong_fields: [] 
+        setParsedGroups([...parsedGroups, {
+            name: `G${parsedGroups.length + 1}`,
+            count: 1,
+            correct_fields: [],
+            wrong_fields: [],
+            wrong_field_rules: {}
         }]);
     };
 
@@ -186,10 +188,10 @@ function App() {
         try {
             // Use the schema that was used for generation, or fall back to current fields
             const schemaToUse = generatedSchema && generatedSchema.length > 0 ? generatedSchema : fields;
-            
+
             // Filter out fields with empty names before sending
             const validFields = schemaToUse.filter(f => f.name && f.name.trim() !== '');
-            
+
             if (validFields.length === 0) {
                 throw new Error('No valid fields defined. Please add at least one field with a name.');
             }
@@ -201,10 +203,18 @@ function App() {
                     name: updatedGroup.name,
                     count: updatedGroup.count,
                     correct_fields: updatedGroup.correct_fields,
-                    wrong_fields: updatedGroup.wrong_fields
+                    wrong_fields: updatedGroup.wrong_fields,
+                    wrong_field_rules: updatedGroup.wrong_field_rules || {}
                 }],
-                // For prompt mode, use the prompt; for manual mode, use empty string
-                additional_rules: editMode === 'prompt' ? prompt : '',
+                // For prompt mode, use the prompt; for manual mode, construct rules from wrong_field_rules
+                additional_rules: editMode === 'prompt'
+                    ? prompt
+                    : (updatedGroup.wrong_field_rules && Object.keys(updatedGroup.wrong_field_rules).length > 0)
+                        ? "For invalid fields, follow these rules: " + Object.entries(updatedGroup.wrong_field_rules)
+                            .filter(([field]) => updatedGroup.wrong_fields.includes(field))
+                            .map(([field, rule]) => `${field}: ${rule}`)
+                            .join('; ')
+                        : '',
                 model_provider: modelProvider
             };
 
@@ -218,8 +228,8 @@ function App() {
 
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                const errorMsg = typeof data.detail === 'string' 
-                    ? data.detail 
+                const errorMsg = typeof data.detail === 'string'
+                    ? data.detail
                     : data.message || JSON.stringify(data.detail) || 'Failed to regenerate group';
                 throw new Error(errorMsg);
             }
@@ -229,12 +239,12 @@ function App() {
             // Update the response by replacing ONLY the old group's data with new data
             if (response && response.data && response.groups) {
                 const oldGroupName = editingGroup.group_name;
-                
+
                 // Filter out ONLY the records from the group being edited
                 const filteredData = response.data.filter(
                     record => record._group !== oldGroupName
                 );
-                
+
                 // Add the newly generated data for this group
                 const updatedData = [...filteredData, ...newGroupData.data];
 
@@ -244,7 +254,8 @@ function App() {
                     group_name: updatedGroup.name,
                     count: newGroupData.count,
                     correct_fields: updatedGroup.correct_fields,
-                    wrong_fields: updatedGroup.wrong_fields
+                    wrong_fields: updatedGroup.wrong_fields,
+                    wrong_field_rules: updatedGroup.wrong_field_rules || {}
                 };
 
                 setResponse({
@@ -357,7 +368,7 @@ function App() {
                 schema_fields: validFields,
                 model_provider: modelProvider
             };
-            
+
             // Add group-based or legacy parameters
             if (parsedUseGroups && parsedGroups.length > 0) {
                 payload.groups = parsedGroups;
@@ -366,11 +377,34 @@ function App() {
                 payload.correct_num_records = parseInt(parsedCorrectNumRecords) || 0;
                 payload.wrong_num_records = parseInt(parsedWrongNumRecords) || 0;
             }
-            
-            if (parsedAdditionalRules) {
-                payload.additional_rules = parsedAdditionalRules;
+
+            let finalAdditionalRules = parsedAdditionalRules || '';
+
+            // Append group-specific wrong field rules if using groups
+            if (parsedUseGroups && parsedGroups.length > 0) {
+                const allGroupRules = parsedGroups
+                    .filter(g => g.wrong_field_rules && Object.keys(g.wrong_field_rules).length > 0)
+                    .map(g => {
+                        const rulesStr = Object.entries(g.wrong_field_rules)
+                            .filter(([field]) => (g.wrong_fields || []).includes(field))
+                            .map(([field, rule]) => `${field}: ${rule}`)
+                            .join('; ');
+                        return rulesStr ? `For group ${g.name}, invalid fields rules: ${rulesStr}` : '';
+                    })
+                    .filter(s => s)
+                    .join('\n');
+
+                if (allGroupRules) {
+                    finalAdditionalRules = finalAdditionalRules
+                        ? `${finalAdditionalRules}\n${allGroupRules}`
+                        : allGroupRules;
+                }
             }
-            
+
+            if (finalAdditionalRules) {
+                payload.additional_rules = finalAdditionalRules;
+            }
+
             const res = await fetch('http://localhost:8000/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -463,12 +497,12 @@ function App() {
             if (mode === 'single') {
                 endpoint = 'http://localhost:8000/generate';
                 const validFields = fields.filter(f => f.name);
-                
+
                 body = {
                     schema_fields: validFields,
                     model_provider: modelProvider
                 };
-                
+
                 // Add group-based or legacy parameters
                 if (useGroups && groups.length > 0) {
                     body.groups = groups;
@@ -477,9 +511,32 @@ function App() {
                     body.correct_num_records = parseInt(correctNumRecords);
                     body.wrong_num_records = parseInt(wrongNumRecords);
                 }
-                
-                if (additionalRules) {
-                    body.additional_rules = additionalRules;
+
+                let finalAdditionalRules = additionalRules || '';
+
+                // Append group-specific wrong field rules if using groups
+                if (useGroups && groups.length > 0) {
+                    const allGroupRules = groups
+                        .filter(g => g.wrong_field_rules && Object.keys(g.wrong_field_rules).length > 0)
+                        .map(g => {
+                            const rulesStr = Object.entries(g.wrong_field_rules)
+                                .filter(([field]) => (g.wrong_fields || []).includes(field))
+                                .map(([field, rule]) => `${field}: ${rule}`)
+                                .join('; ');
+                            return rulesStr ? `For group ${g.name}, invalid fields rules: ${rulesStr}` : '';
+                        })
+                        .filter(s => s)
+                        .join('\n');
+
+                    if (allGroupRules) {
+                        finalAdditionalRules = finalAdditionalRules
+                            ? `${finalAdditionalRules}\n${allGroupRules}`
+                            : allGroupRules;
+                    }
+                }
+
+                if (finalAdditionalRules) {
+                    body.additional_rules = finalAdditionalRules;
                 }
             } else if (mode === 'selenium') {
                 endpoint = 'http://localhost:8000/generate-from-selenium';
@@ -506,7 +563,7 @@ function App() {
 
             const data = await res.json();
             setResponse(data);
-            
+
             // Store the schema that was used for this generation
             if (mode === 'single') {
                 const validFields = fields.filter(f => f.name);
@@ -836,7 +893,7 @@ function App() {
                                 <pre>{JSON.stringify(response.parsed_schema, null, 2)}</pre>
                             </div>
                         )}
-                        
+
                         {/* Show group breakdown if available */}
                         {response.groups && response.groups.length > 0 && (
                             <div className="group-breakdown">
@@ -849,7 +906,7 @@ function App() {
                                                     <strong>{grp.group_name}</strong>
                                                     <span className="group-count-badge">{grp.count} records</span>
                                                 </div>
-                                                <button 
+                                                <button
                                                     className="edit-group-btn"
                                                     onClick={() => handleEditGroupClick(grp, idx)}
                                                     title="Edit and regenerate this group"
@@ -874,7 +931,7 @@ function App() {
                                 </div>
                             </div>
                         )}
-                        
+
                         <h2>Generated Data ({response.count} records)</h2>
                         {response.groups && response.groups.length > 0 && (
                             <p className="metadata-note">
@@ -882,31 +939,31 @@ function App() {
                                 <code>_group</code> (group name) and <code>_wrong_fields</code> (fields intentionally made invalid)
                             </p>
                         )}
-                            <div className="view-controls">
-                                <button
-                                    className={viewMode === 'json' ? 'active' : ''}
-                                    onClick={() => setViewMode('json')}
-                                >
-                                    JSON View
-                                </button>
-                                <button
-                                    className={viewMode === 'csv' ? 'active' : ''}
-                                    onClick={() => setViewMode('csv')}
-                                >
-                                    CSV View
-                                </button>
-                                <button onClick={() => downloadCSV(response.data)} className="download-btn">
-                                    Download CSV
-                                </button>
-                            </div>
-                            <div className="data-table">
-                                {viewMode === 'json' ? (
-                                    <pre>{JSON.stringify(response.data, null, 2)}</pre>
-                                ) : (
-                                    <pre>{convertToCSV(response.data)}</pre>
-                                )}
-                            </div>
-                        </>
+                        <div className="view-controls">
+                            <button
+                                className={viewMode === 'json' ? 'active' : ''}
+                                onClick={() => setViewMode('json')}
+                            >
+                                JSON View
+                            </button>
+                            <button
+                                className={viewMode === 'csv' ? 'active' : ''}
+                                onClick={() => setViewMode('csv')}
+                            >
+                                CSV View
+                            </button>
+                            <button onClick={() => downloadCSV(response.data)} className="download-btn">
+                                Download CSV
+                            </button>
+                        </div>
+                        <div className="data-table">
+                            {viewMode === 'json' ? (
+                                <pre>{JSON.stringify(response.data, null, 2)}</pre>
+                            ) : (
+                                <pre>{convertToCSV(response.data)}</pre>
+                            )}
+                        </div>
+                    </>
                 </div>
             )}
             <TypeModal

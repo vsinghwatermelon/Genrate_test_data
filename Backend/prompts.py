@@ -267,9 +267,9 @@ Now generate {total_records} unique records:"""
         
         if wrong_fields:
             prompt += f"""✗ WRONG/INVALID FIELDS: {', '.join(wrong_fields)}
-- These fields MUST be CLEARLY INVALID
-- Deliberately violate their schema rules
-- Use DIFFERENT violation types for each record:
+- These fields MUST be CLEARLY INVALID.
+- CHECK "ADDITIONAL CONTEXT/RULES" above first. If it contains specific instructions for how a field should be wrong (e.g. "email: invalid format"), YOU MUST FOLLOW THOSE INSTRUCTIONS.
+- If no specific instruction is provided for a field, use generic violations:
   * Wrong type (string instead of number, etc.)
   * Wrong format (invalid email, malformed phone)
   * Wrong length (too short or too long)

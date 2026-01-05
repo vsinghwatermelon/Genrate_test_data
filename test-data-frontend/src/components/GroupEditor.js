@@ -44,6 +44,17 @@ function GroupEditor({ group, fields, onChange, onRemove }) {
     const isCorrect = (fieldName) => (group.correct_fields || []).includes(fieldName);
     const isWrong = (fieldName) => (group.wrong_fields || []).includes(fieldName);
 
+    // Add or update wrong_field_rules for a field
+    const handleWrongRuleChange = (fieldName, value) => {
+        const rules = { ...(group.wrong_field_rules || {}) };
+        if (value) {
+            rules[fieldName] = value;
+        } else {
+            delete rules[fieldName];
+        }
+        onChange('wrong_field_rules', rules);
+    };
+
     const markAllCorrect = () => {
         const allFieldNames = fields.map(f => f.name);
         onChange('correct_fields', allFieldNames);
@@ -104,6 +115,7 @@ function GroupEditor({ group, fields, onChange, onRemove }) {
                     <span>Field</span>
                     <span>✓ Correct</span>
                     <span>✗ Wrong</span>
+                    <span style={{marginLeft: 8}}>If Wrong, What Should Be Wrong?</span>
                 </div>
                 {fields.map((field, idx) => (
                     <div key={idx} className="field-row">
@@ -122,6 +134,15 @@ function GroupEditor({ group, fields, onChange, onRemove }) {
                                 onChange={() => handleFieldToggle(field.name, 'wrong')}
                             />
                         </label>
+                        {isWrong(field.name) && (
+                            <input
+                                type="text"
+                                placeholder="e.g. invalid email, empty, too short"
+                                style={{marginLeft: 8, width: 180}}
+                                value={group.wrong_field_rules?.[field.name] || ''}
+                                onChange={e => handleWrongRuleChange(field.name, e.target.value)}
+                            />
+                        )}
                     </div>
                 ))}
             </div>
