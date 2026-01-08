@@ -9,6 +9,7 @@ using LLM-based generation with support for:
 """
 
 import traceback
+import re
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, status
@@ -194,7 +195,7 @@ async def generate_from_selenium(request: SeleniumGenerateRequest):
         if not script_text:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="selenium_script is required and cannot be empty",
+            preprocessed_text = preprocess_selenium_script(script_text)
             )
         
         # Step 1: Preprocess the Selenium script

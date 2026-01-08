@@ -305,25 +305,21 @@ class SeleniumParserPrompts:
     @staticmethod
     def create_parse_prompt(script_text: str) -> str:
         """
-        Create prompt for parsing Selenium script to extract form fields.
-        If no HTML fields are found, extract fields directly from the Selenium script.
+        Always instruct the LLM to extract fields from BOTH the Selenium script and the HTML details, if present.
         """
-        # Detect if HTML fields are present
-        has_html_fields = "Extracted HTML Page Details:" in script_text and "--- Fields from downloaded page" in script_text
-        if has_html_fields:
-            return f"""You are an expert parser assistant. Analyze the following EXTRACTED FIELD VALUES and EXTRACTED HTML PAGE DETAILS.
+        return f"""You are an expert parser assistant. Analyze the following EXTRACTED FIELD VALUES and EXTRACTED HTML PAGE DETAILS from a Selenium automation script and its rendered HTML.
 
-IMPORTANT: "Extracted HTML Page Details" is the PRIMARY SOURCE OF TRUTH for the list of fields. 
-The "Extracted form field values" section is secondary and only provides example values.
+IMPORTANT: Extract fields from BOTH the Selenium script and the HTML details below. If a field appears in either, INCLUDE IT in your output. Do not ignore fields that are only present in the script or only in the HTML.
 
 Your task:
-1. Scan the "Extracted HTML Page Details" section.
-2. For EVERY Input, Select, Textarea, Radio, or Checkbox found in the HTML details, you MUST create a field definition in the output JSON.
-3. If a field appears in the HTML but not in the Selenium script, INCLUDE IT anyway. The HTML list represents the complete form found on the page.
+1. Scan BOTH the Selenium script and the HTML details.
+2. For EVERY Input, Select, Textarea, Radio, or Checkbox found in EITHER the script or the HTML, create a field definition in the output JSON.
+3. If a field appears in both, deduplicate by name.
 
 Field Name Logic:
     - Example: Label="Date of Birth" -> name="date_of_birth"
     - Example: Placeholder="Enter your full name" -> name="full_name"
+    - Example: Function argument or variable name -> use as-is, but convert to snake_case
 
 Field Type Logic:
 
@@ -344,40 +340,7 @@ Return ONLY a valid JSON array. Each item must be:
     {{"name": "gender", "type": "radio", "rules": "Male, Female", "description": "Gender selection", "example": "Male", "confidence": 1.0}}
 ]
 
-Now analyze the text below inside the <DATA> tags. REMEMBER: Output ALL fields found in the HTML section.
-
-<DATA>
-{script_text}
-</DATA>"""
-        else:
-            return f"""You are an expert parser assistant. Analyze the following EXTRACTED FIELD VALUES from a Selenium automation script.
-
-IMPORTANT: The Selenium script is the ONLY SOURCE OF TRUTH for the list of fields. Extract every field the script interacts with (calls like driver.enter_text, driver.get_text, etc.).
-
-Your task:
-1. Scan the Selenium script and extract every form field (input, select, textarea, radio, checkbox) that is interacted with.
-2. For each field, infer a clean snake_case name, type, rules (if any), description, realistic example value, and confidence score.
-
-Field Name Logic:
-
-Return ONLY a valid JSON array. Each item must be:
-{{
-    "name": "snake_case_name",
-    "type": "string|email|phone|date|number|select|radio|checkbox|...",
-    "rules": "validation rules or options",
-    "description": "Brief description",
-    "example": "Example value",
-    "confidence": 0.95
-}}
-
-=== EXAMPLE OUTPUT ===
-[
-    {{"name": "full_name", "type": "string", "rules": "", "description": "Full Name field", "example": "John Doe", "confidence": 1.0}},
-    {{"name": "email", "type": "email", "rules": "", "description": "Email address", "example": "user@example.com", "confidence": 1.0}},
-    {{"name": "phone", "type": "phone", "rules": "", "description": "Phone number", "example": "9876543210", "confidence": 1.0}}
-]
-
-Now analyze the text below inside the <DATA> tags. Output ALL fields found in the Selenium script.
+Now analyze the text below inside the <DATA> tags. Output ALL fields found in the Selenium script and/or HTML details.
 
 <DATA>
 {script_text}

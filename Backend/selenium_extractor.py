@@ -425,8 +425,34 @@ def preprocess_selenium_script(script_text: str) -> str:
         Formatted text optimized for LLM parsing
     """
     
-    # Extract values from enter_text calls
-    extracted_values, formatted_text = extract_selenium_values(script_text)
+    # Extract all lines that may reference fields
+    field_related_lines = []
+    for line in script_text.splitlines():
+        line_strip = line.strip()
+        if (
+            line_strip.startswith('driver.enter_text') or
+            line_strip.startswith('driver.click') or
+            line_strip.startswith('driver.checkbox') or
+            line_strip.startswith('driver.is_verify') or
+            line_strip.startswith('driver.get_text') or
+            line_strip.startswith('driver.find_element') or
+            line_strip.startswith('driver.select') or
+            line_strip.startswith('driver.radio') or
+            line_strip.startswith('driver.capture_output') or
+            line_strip.startswith('def execute_snippet') or
+            line_strip.startswith('def ')
+        ):
+            field_related_lines.append(line_strip)
+
+    # Always include lines with assignment from args.get (for dynamic fields)
+    for line in script_text.splitlines():
+        if 'args.get(' in line:
+            field_related_lines.append(line.strip())
+
+    # Compose formatted text for LLM
+    formatted_text = "Relevant Selenium script lines for field extraction:\n\n"
+    for i, l in enumerate(field_related_lines, 1):
+        formatted_text += f"{i}. {l}\n"
 
     # Extract and download HTML from driver.go_to calls
     downloaded_files = download_html_from_script(script_text)
@@ -457,8 +483,8 @@ def preprocess_selenium_script(script_text: str) -> str:
     # Extract additional context
     context = extract_other_selenium_commands(script_text)
 
-    # If we have extracted values, enhance the formatted text with context
-    if extracted_values and (context['labels'] or context['tabs']):
+    # If we have field-related lines, enhance the formatted text with context
+    if field_related_lines and (context['labels'] or context['tabs']):
         formatted_text += "\nAdditional context:\n"
         if context['labels']:
             formatted_text += f"\nLabels found: {', '.join(context['labels'])}\n"
