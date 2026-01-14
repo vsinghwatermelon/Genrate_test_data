@@ -7,24 +7,31 @@ export default function FieldEditor({
     field,
     onChange,
     onRemove,
-    openTypeModal,
-    context // optional: {mode:'single', index} or {mode:'table', tableIndex, fieldIndex}
+    openTypeModal
 }) {
-    const preview = useMemo(() => {
-        // prefer explicit example, then generator
-        if (field.example) return field.example;
-        return generateSample(field.type);
-    }, [field.example, field.type]);
+    // Ensure rules is always a string for display
+    let rulesString = '';
+    if (typeof field.rules === 'string') {
+        rulesString = field.rules;
+    } else if (Array.isArray(field.rules)) {
+        rulesString = field.rules.join('; ');
+    } else if (field.rules && typeof field.rules === 'object') {
+        rulesString = JSON.stringify(field.rules);
+    }
 
-    const handleTypeChange = (v) => {
-        onChange('type', v);
-        const t = allDataTypes.find(x => x.id === v || x.name === v);
-        if (t) {
-            if (t.example) onChange('example', t.example);
-            // rules: defaultRule or description
-            onChange('rules', t.defaultRule || t.description || '');
-        }
+    // Handle type change
+    const handleTypeChange = (newType) => {
+        onChange('type', newType);
     };
+
+    // Generate preview sample
+    const preview = useMemo(() => {
+        try {
+            return generateSample(field);
+        } catch (e) {
+            return 'N/A';
+        }
+    }, [field]);
 
     return (
         <div className="field-editor">
@@ -32,13 +39,17 @@ export default function FieldEditor({
                 type="text"
                 className="fe-name"
                 placeholder="Field Name"
-                value={field.name}
+                value={field.name || ''}
                 onChange={(e) => onChange('name', e.target.value)}
                 required
             />
 
             <div className="fe-type-wrap">
-                <select className="fe-type" value={field.type} onChange={(e) => handleTypeChange(e.target.value)}>
+                <select
+                    className="fe-type"
+                    value={field.type || 'string'}
+                    onChange={(e) => handleTypeChange(e.target.value)}
+                >
                     <optgroup label="Common types">
                         <option value="string">String</option>
                         <option value="integer">Integer</option>
@@ -47,21 +58,48 @@ export default function FieldEditor({
                         <option value="email">Email</option>
                         <option value="phone">Phone</option>
                         <option value="date">Date</option>
+                        <option value="combobox">Combobox</option>
+                        <option value="radio">Radio</option>
+                        <option value="checkbox">Checkbox</option>
+                        <option value="select">Select</option>
                     </optgroup>
                     <optgroup label="All types">
-                        {allDataTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        {allDataTypes.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
                     </optgroup>
                 </select>
-                <button type="button" className="fe-choose" onClick={openTypeModal}>Choose...</button>
+                {openTypeModal && (
+                    <button type="button" className="fe-choose" onClick={openTypeModal}>
+                        Choose...
+                    </button>
+                )}
             </div>
 
-            <input type="text" className="fe-rules" placeholder="Rules" value={field.rules || ''} onChange={(e) => onChange('rules', e.target.value)} />
-            <input type="text" className="fe-example" placeholder="Example" value={field.example || ''} onChange={(e) => onChange('example', e.target.value)} />
+            <input
+                type="text"
+                className="fe-rules"
+                placeholder="Rules"
+                value={rulesString}
+                onChange={(e) => onChange('rules', e.target.value)}
+            />
 
-            <div className="fe-preview">Preview: <code>{preview}</code></div>
+            <input
+                type="text"
+                className="fe-example"
+                placeholder="Example"
+                value={field.example || ''}
+                onChange={(e) => onChange('example', e.target.value)}
+            />
+
+            <div className="fe-preview">
+                <code>{preview}</code>
+            </div>
 
             {onRemove && (
-                <button type="button" className="fe-remove" onClick={onRemove}>✕</button>
+                <button type="button" className="fe-remove" onClick={onRemove}>
+                    ✕
+                </button>
             )}
         </div>
     );

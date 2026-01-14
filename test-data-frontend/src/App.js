@@ -17,6 +17,7 @@ import FieldEditor from './components/FieldEditor';
 import GroupEditor from './components/GroupEditor';
 import GroupEditModal from './components/GroupEditModal';
 import * as XLSX from 'xlsx';
+import SeleniumFolderUpload from './components/SeleniumFolderUpload';
 
 function App() {
     // ========================================================================
@@ -602,6 +603,12 @@ function App() {
                 >
                     🧾 From Selenium
                 </button>
+                <button
+                    className={mode === 'selenium-folder' ? 'active' : ''}
+                    onClick={() => setMode('selenium-folder')}
+                >
+                    📁 Selenium Folder Extractor
+                </button>
             </div>
 
             {/* Model Provider Selection */}
@@ -868,7 +875,9 @@ function App() {
                                 </div>
                             </div>
                         )}
-                    </>) : null}
+                    </>) : mode === 'selenium-folder' ? (
+                        <SeleniumFolderUpload onExtract={setParsedFields} />
+                    ) : null}
 
                 {mode === 'selenium' ? null : (
                     <button type="submit" disabled={loading} className="submit-btn">
@@ -887,12 +896,7 @@ function App() {
             {response && (
                 <div className="response">
                     <>
-                        {mode === 'selenium' && response.parsed_schema && (
-                            <div className="parsed-schema">
-                                <h3>Parsed Schema</h3>
-                                <pre>{JSON.stringify(response.parsed_schema, null, 2)}</pre>
-                            </div>
-                        )}
+                        {/* Remove old table-style parsed schema display for selenium mode. Always use FieldEditor-based UI below. */}
 
                         {/* Show group breakdown if available */}
                         {response.groups && response.groups.length > 0 && (

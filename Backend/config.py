@@ -40,10 +40,14 @@ class ServerConfig:
     host: str = field(default_factory=lambda: os.getenv("SERVER_HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: int(os.getenv("SERVER_PORT", "8000")))
     debug: bool = field(default_factory=lambda: os.getenv("DEBUG", "false").lower() == "true")
-    cors_origins: List[str] = field(default_factory=lambda: os.getenv(
-        "CORS_ORIGINS", 
-        "http://localhost:3000,http://127.0.0.1:3000"
-    ).split(","))
+    # Allow frontend dev server (React) and any other needed origins
+    cors_origins: List[str] = field(default_factory=lambda: [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ] + os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS", "") else [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ])
 
 
 @dataclass

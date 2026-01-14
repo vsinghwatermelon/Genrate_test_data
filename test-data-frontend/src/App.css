@@ -673,6 +673,7 @@ form {
     color: white;
     border-color: #764ba2;
 }
+
 /* Group Breakdown Styles */
 .group-breakdown {
     background: #f8f9fa;
@@ -816,4 +817,34 @@ form {
     color: #d63384;
     font-size: 0.85rem;
     margin: 0 3px;
+}
+
+/* Selenium Folder Upload Styles */
+.selenium-folder-upload {
+    background: #fffbe6;
+    border: 1px solid #ffe58f;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.selenium-folder-upload h2 {
+    color: #ad8b00;
+}
+
+.selenium-folder-upload .error {
+    color: #d4380d;
+    margin-top: 10px;
+}
+
+.selenium-folder-upload .fields-preview {
+    margin-top: 20px;
+}
+
+.selenium-folder-upload ul {
+    padding-left: 20px;
+}
+
+.selenium-folder-upload li {
+    margin-bottom: 8px;
 }

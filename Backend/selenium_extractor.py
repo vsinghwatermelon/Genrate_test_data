@@ -76,10 +76,10 @@ def extract_selenium_values(script_text: str) -> Tuple[List[Dict[str, str]], str
             formatted_text += f"{i}. {item['value']}\n"
     else:
         # If no values extracted, return original script
-        formatted_text = script_text
-    
-    return unique_values, formatted_text
-
+        """
+        Extract all form fields (inputs, selects, textareas, checkboxes, radios, custom fields) from the HTML.
+        Returns a list of dicts with field info, including user-friendly labels, placeholders, aria-labels, and options.
+        """
 
 def extract_other_selenium_commands(script_text: str) -> Dict[str, List[str]]:
     """

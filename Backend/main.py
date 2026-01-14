@@ -1,3 +1,10 @@
+# =============================================================================
+# NEW ENDPOINT: Generate Data from Confirmed Schema & Groups
+# =============================================================================
+
+from fastapi import Request
+
+
 """
 Test Data Generator API
 
@@ -12,15 +19,18 @@ import traceback
 import re
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, status, UploadFile, File
 from fastapi.responses import JSONResponse
+import zipfile
+import io
+import tempfile
+import os
 
 from config import get_config
 from data_generator import TestDataGenerator
 from llm_factory import LLMFactory
 from selenium_llm_parser import parse_selenium_script
-from selenium_extractor import preprocess_selenium_script
+from selenium_extractor import preprocess_selenium_script, download_html_from_script, extract_fields_from_html
 from models import (
     GenerateRequest,
     GenerateResponse,
@@ -37,47 +47,52 @@ from models import (
 
 config = get_config()
 
-app = FastAPI(
-    title="Test Data Generator API",
-    description="Generate realistic test data using LLM-powered generation",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
+app = FastAPI()
 
-# Configure CORS
+# Add CORS middleware to allow frontend requests
+from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.server.cors_origins,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Handle OPTIONS requests for CORS preflight
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle CORS preflight requests."""
+    return {"message": "OK"}
 
 # =============================================================================
-# STARTUP/SHUTDOWN EVENTS
+# NEW ENDPOINT: Upload Selenium Folder and Extract HTML Fields
 # =============================================================================
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize on startup."""
-    print("🚀 Server starting...")
+from fastapi import Request
+from endpoints.selenium_field_extraction import extract_fields_from_uploaded_folder
+
+@app.post("/extract-fields-from-folder", tags=["Selenium"])
+async def extract_fields_from_folder(request: Request, file: UploadFile = File(...)):
+    """
+    Extract form fields from uploaded Selenium script folder.
+    
+    Accepts a zipped folder containing:
+    - Selenium/automation scripts (any .py file with driver.get())
+    - Locator configuration files (any format: .py, .json, .yaml)
+    
+    Dynamically:
+    - Identifies scripts and locators
+    - Extracts target URL and actions
+    - Navigates website and captures HTML
+    - Extracts all form fields
+    - Generates user-editable schema using LLM or rules
+    
+    Returns comprehensive field data and schema for frontend editing.
+    """
+    return await extract_fields_from_uploaded_folder(request, file)
 
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up on shutdown."""
-    print("🛑 Server shutting down...")
-
-
-
-
-# =============================================================================
-# EXCEPTION HANDLERS
-# =============================================================================
-
-@app.exception_handler(ValueError)
 async def value_error_handler(request, exc: ValueError):
     """Handle validation errors."""
     return JSONResponse(
@@ -85,15 +100,42 @@ async def value_error_handler(request, exc: ValueError):
         content={"detail": str(exc)},
     )
 
-
-# =============================================================================
-# API ENDPOINTS
-# =============================================================================
+@app.post("/generate-data-from-schema", tags=["Selenium"])
+async def generate_data_from_schema(request: Request):
+    """
+    Accepts edited schema and group config from frontend, generates test data accordingly.
+    Request JSON: { schema: [...], groups: [...], ai_model: "groq"|"ollama" }
+    """
+    try:
+        body = await request.json()
+        schema = body.get("schema")
+        groups = body.get("groups")
+        ai_model = body.get("ai_model", "ollama")
+        if not schema:
+            raise HTTPException(status_code=400, detail="Missing schema definition.")
+        generator = TestDataGenerator(provider=ai_model)
+        num_records = sum(g.get('count', 0) for g in groups) if groups else 5
+        result = generator.generate_data(
+            schema_fields=schema,
+            groups=groups,
+            num_records=num_records,
+            additional_rules=None
+        )
+        return {"test_data": result['data']}
+    except Exception as e:
+        print(f"[ERROR] Data generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Data generation failed: {e}")
 
 @app.get("/", tags=["Health"])
 async def root():
     """Root endpoint - API readiness check."""
     return {"message": "Test Data Generator API - Ready", "version": "2.0.0"}
+
+
+@app.get("/ping", tags=["Health"])
+async def ping():
+    """Simple ping endpoint for frontend health checks."""
+    return {"status": "ok", "message": "pong"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])

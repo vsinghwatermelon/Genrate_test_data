@@ -20,6 +20,9 @@ from utils.console import (
     print_info,
     print_debug,
 )
+from utils.locator_parser import LocatorParser, ScriptAnalyzer
+from utils.html_extractor import HTMLFieldExtractor
+from utils.schema_generator import SchemaGenerator
 
 __all__ = [
     'JSONCleaner',
