@@ -16,8 +16,10 @@ import allDataTypes from './data/allDataTypes';
 import FieldEditor from './components/FieldEditor';
 import GroupEditor from './components/GroupEditor';
 import GroupEditModal from './components/GroupEditModal';
+import SchemaEditor from './components/SchemaEditor';
 import * as XLSX from 'xlsx';
 import SeleniumFolderUpload from './components/SeleniumFolderUpload';
+import ScriptExecutor from './components/ScriptExecutor';
 
 function App() {
     // ========================================================================
@@ -62,6 +64,8 @@ function App() {
     const [parsedCorrectNumRecords, setParsedCorrectNumRecords] = useState(5);
     const [parsedWrongNumRecords, setParsedWrongNumRecords] = useState(0);
     const [parsedAdditionalRules, setParsedAdditionalRules] = useState('');
+    const [showParsedEditor, setShowParsedEditor] = useState(false);
+    const [parsedEditorFields, setParsedEditorFields] = useState([]);
 
     // Common state
     const [response, setResponse] = useState(null);
@@ -180,6 +184,23 @@ function App() {
         setEditingGroup(groupData);
         setEditingGroupIndex(index);
         setShowGroupEditModal(true);
+    };
+
+    // ========================================================================
+    // SCRIPT EXECUTOR SCHEMA HANDLER
+    // ========================================================================
+    const handleSchemaGenerated = (schema, options = {}) => {
+        // Convert parsed schema to parsed fields format
+        if (schema && Array.isArray(schema)) {
+            setParsedFields(schema);
+            setParsedSchema(schema);
+            // Default to group-based generation for a richer experience
+            setParsedUseGroups(true);
+            // Switch to selenium mode to show the schema editor unless caller requested inline behavior
+            if (!options.inline) {
+                setMode('selenium');
+            }
+        }
     };
 
     const handleGroupEditSave = async (editMode, updatedGroup, prompt) => {
@@ -327,6 +348,7 @@ function App() {
             if (data.parsed_schema && data.parsed_schema.length > 0) {
                 const normalized = normalizeIncomingFields(data.parsed_schema);
                 setParsedFields(normalized);
+                setParsedUseGroups(true);
                 setParsedNumRecords(5);
                 setParsedCorrectNumRecords(5);
                 setParsedWrongNumRecords(0);
@@ -549,6 +571,22 @@ function App() {
                     additional_rules: seleniumAdditionalRules || undefined,
                     model_provider: modelProvider
                 };
+            } else if (parsedFields && Array.isArray(parsedFields) && parsedFields.length > 0) {
+                // If parsedFields exists (from script executor or folder), treat like single-mode generation
+                endpoint = 'http://localhost:8000/generate';
+                const validFields = parsedFields.filter(f => f.name && f.name.trim() !== '');
+                body = {
+                    schema_fields: validFields,
+                    model_provider: modelProvider
+                };
+
+                if (parsedUseGroups && parsedGroups.length > 0) {
+                    body.groups = parsedGroups;
+                } else {
+                    body.num_records = parseInt(parsedNumRecords);
+                    body.correct_num_records = parseInt(parsedCorrectNumRecords);
+                    body.wrong_num_records = parseInt(parsedWrongNumRecords);
+                }
             }
 
             const res = await fetch(endpoint, {
@@ -608,6 +646,12 @@ function App() {
                     onClick={() => setMode('selenium-folder')}
                 >
                     📁 Selenium Folder Extractor
+                </button>
+                <button
+                    className={mode === 'script-executor' ? 'active' : ''}
+                    onClick={() => setMode('script-executor')}
+                >
+                    ▶️ Script Executor
                 </button>
             </div>
 
@@ -868,15 +912,43 @@ function App() {
                                     </label>
                                 </div>
 
-                                <div style={{ marginTop: 12 }}>
+                                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                                    <button type="button" onClick={() => {
+                                        // Open inline editor so user can review/edit before generating
+                                        setParsedEditorFields(parsedFields || []);
+                                        setShowParsedEditor(true);
+                                    }} className="submit-btn" disabled={loading}>
+                                        Edit Schema
+                                    </button>
                                     <button type="button" onClick={confirmGenerateFromParsed} className="submit-btn" disabled={loading}>
-                                        {loading ? 'Generating...' : 'Confirm & Generate Data'}
+                                        {loading ? 'Generating...' : 'Generate Data'}
                                     </button>
                                 </div>
+
+                                {showParsedEditor && (
+                                    <div className="form-section parsed-editor-inline" style={{ marginTop: 12, background: '#f8f9fb', padding: 12, borderRadius: 6 }}>
+                                        <h4>Review & Edit Parsed Schema</h4>
+                                        <SchemaEditor fields={parsedEditorFields} onChange={(updated) => setParsedEditorFields(updated)} />
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                            <button type="button" className="btn btn-primary" onClick={() => {
+                                                // Save edits back to parsedFields but DO NOT auto-generate
+                                                setParsedFields(parsedEditorFields);
+                                                setShowParsedEditor(false);
+                                            }} disabled={loading}>
+                                                Save Edits
+                                            </button>
+                                            <button type="button" className="btn btn-secondary" onClick={() => setShowParsedEditor(false)} disabled={loading}>
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </>) : mode === 'selenium-folder' ? (
                         <SeleniumFolderUpload onExtract={setParsedFields} />
+                    ) : mode === 'script-executor' ? (
+                        <ScriptExecutor onSchemaGenerated={handleSchemaGenerated} />
                     ) : null}
 
                 {mode === 'selenium' ? null : (

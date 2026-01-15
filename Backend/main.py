@@ -39,6 +39,7 @@ from models import (
     HealthResponse,
     LLMProvider,
 )
+from endpoints.parse_clicked_elements import router as parse_router
 
 
 # =============================================================================
@@ -65,12 +66,16 @@ async def options_handler(path: str):
     """Handle CORS preflight requests."""
     return {"message": "OK"}
 
+# Include routers
+app.include_router(parse_router, tags=["Parsing"])
+
 # =============================================================================
 # NEW ENDPOINT: Upload Selenium Folder and Extract HTML Fields
 # =============================================================================
 
 from fastapi import Request
 from endpoints.selenium_field_extraction import extract_fields_from_uploaded_folder
+from endpoints.script_execution import execute_selenium_script, list_script_actions
 
 @app.post("/extract-fields-from-folder", tags=["Selenium"])
 async def extract_fields_from_folder(request: Request, file: UploadFile = File(...)):
@@ -91,6 +96,38 @@ async def extract_fields_from_folder(request: Request, file: UploadFile = File(.
     Returns comprehensive field data and schema for frontend editing.
     """
     return await extract_fields_from_uploaded_folder(request, file)
+
+
+@app.post("/execute-selenium-script", tags=["Selenium"])
+async def execute_script(request: Request, file: UploadFile = File(...)):
+    """
+    Execute uploaded Selenium script and track all actions.
+    
+    This endpoint:
+    - Accepts a zip file with Selenium script and locator configs
+    - Executes the script with action tracking
+    - Logs all clicked buttons and filled fields
+    - Returns detailed information about all interactions
+    
+    Query Parameters:
+    - headless (optional): Run browser in headless mode (default: true)
+    
+    Returns tracked actions including clicks and field inputs.
+    """
+    return await execute_selenium_script(request, file)
+
+
+@app.post("/analyze-selenium-script", tags=["Selenium"])
+async def analyze_script(request: Request, file: UploadFile = File(...)):
+    """
+    Analyze Selenium script without execution.
+    
+    Lightweight endpoint that parses the script to show expected actions
+    without actually running the browser automation.
+    
+    Returns script metadata, target URL, and list of actions.
+    """
+    return await list_script_actions(request, file)
 
 
 async def value_error_handler(request, exc: ValueError):

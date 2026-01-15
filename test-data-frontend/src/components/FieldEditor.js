@@ -7,7 +7,8 @@ export default function FieldEditor({
     field,
     onChange,
     onRemove,
-    openTypeModal
+    openTypeModal,
+    hideExample = false
 }) {
     // Ensure rules is always a string for display
     let rulesString = '';
@@ -92,9 +93,11 @@ export default function FieldEditor({
                 onChange={(e) => onChange('example', e.target.value)}
             />
 
-            <div className="fe-preview">
-                <code>{preview}</code>
-            </div>
+            {!hideExample && (
+                <div className="fe-preview">
+                    <code>{preview}</code>
+                </div>
+            )}
 
             {onRemove && (
                 <button type="button" className="fe-remove" onClick={onRemove}>
