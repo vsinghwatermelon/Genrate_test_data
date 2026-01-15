@@ -210,12 +210,13 @@ class ScriptAnalyzer:
         locator_refs = set()
         
         patterns = [
-            r'helper\.(?:click|send_keys|wait)\(["\']([^"\']+)["\']\)',  # helper methods
+            r'helper\.(?:click|send_keys|wait|hover)\(["\']([^"\']+)["\']\)',  # helper methods
             r'find_element\(["\']([^"\']+)["\']\)',  # find_element
             r'locators\[["\']([^"\']+)["\']\]',  # locators dict access
             r'get_element\(["\']([^"\']+)["\']\)',  # get_element
             r'wait_for\(["\']([^"\']+)["\']\)',  # wait_for
             r'interact_with\(["\']([^"\']+)["\']\)',  # interact_with
+            r'(?:hover|move_to)\(["\']([^"\']+)["\']\)',  # hover/move_to
         ]
         
         for pattern in patterns:
@@ -240,6 +241,8 @@ class ScriptAnalyzer:
             (r'helper\.send_keys\(["\']([^"\']+)["\']\s*,\s*["\']?([^"\']+)["\']?\)', 'send_keys'),
             (r'helper\.wait\(["\']([^"\']+)["\']\)', 'wait'),
             (r'helper\.select\(["\']([^"\']+)["\']\s*,\s*["\']([^"\']+)["\']\)', 'select'),
+            (r'helper\.hover\(["\']([^"\']+)["\']\)', 'hover'),
+            (r'helper\.move_to\(["\']([^"\']+)["\']\)', 'hover'),
         ]
         
         # Process script line by line to maintain order

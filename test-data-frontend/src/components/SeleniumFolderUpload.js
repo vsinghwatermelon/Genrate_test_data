@@ -6,6 +6,7 @@ import SchemaEditor from './SchemaEditor';
 import GroupEditor from './GroupEditor';
 import JSZip from 'jszip';
 import FieldEditor from './FieldEditor';
+import './SeleniumFolderUpload.css';
 
 function SeleniumFolderUpload() {
     const [error, setError] = useState('');
@@ -13,7 +14,9 @@ function SeleniumFolderUpload() {
     const [fields, setFields] = useState([]);
     const [extractedDetails, setExtractedDetails] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [isExtracting, setIsExtracting] = useState(false);
     const [aiModel, setAiModel] = useState('groq'); // default to groq
+    const [logs, setLogs] = useState([]);
     const [schema, setSchema] = useState([]); // editable schema
     const [groups, setGroups] = useState([{ name: 'G1', count: 5, correct_fields: [], wrong_fields: [], wrong_field_rules: {} }]);
     const [showSchemaEditor, setShowSchemaEditor] = useState(false);
@@ -109,43 +112,57 @@ function SeleniumFolderUpload() {
         }
 
         // Send to backend
+        setLoading(false);
+        setIsExtracting(true);
+        setLogs(['[SYSTEM] Initializing extraction pipeline...', '[SYSTEM] Zipping folder contents...']);
+
         try {
             const formData = new FormData();
             const zipFile = new File([zipBlob], 'upload.zip', { type: 'application/zip' });
             formData.append('file', zipFile);
             formData.append('ai_model', aiModel); // send selected model
+
+            setLogs(prev => [...prev, '[SYSTEM] Uploading to backend server...', '[SYSTEM] Waiting for processing...']);
+
             const res = await fetch('http://localhost:8000/extract-fields-from-folder', {
                 method: 'POST',
                 body: formData,
             });
+
             if (!res.ok) {
                 let err = 'Backend error';
                 try { err = (await res.json()).detail || err; } catch { }
                 setError(err);
-                setLoading(false);
+                setIsExtracting(false);
                 return;
             }
+
             const data = await res.json();
-            setExtractedDetails(data.fields || []);
-            // Always show parsed_schema for review/edit, even if empty or parse_error
+
+            if (data.logs) {
+                setLogs(data.logs);
+            }
+
+            setExtractedDetails(data.consolidated_fields || []);
+
+            // Always show parsed_schema for review/edit
             if (Array.isArray(data.parsed_schema)) {
                 setSchema(data.parsed_schema);
                 setShowSchemaEditor(true);
-            } else if (data.schema) {
-                setSchema(data.schema);
-                setShowSchemaEditor(true);
             } else {
                 setSchema([]);
-                setShowSchemaEditor(true);
+                setShowSchemaEditor(false);
             }
-            // Show parse_error if present
-            if (data.parse_error) {
-                setError('Schema extraction error: ' + data.parse_error);
+
+            // Show errors if present but keep the UI
+            if (data.schema_errors) {
+                console.warn('Schema validation issues:', data.schema_errors);
             }
         } catch (e) {
-            setError('Network or backend error');
+            setError('Network or backend error: ' + e.message);
+            setLogs(prev => [...prev, '[ERROR] Pipeline failed: ' + e.message]);
         }
-        setLoading(false);
+        setIsExtracting(false);
     };
 
     // Handler for schema/group changes
@@ -208,23 +225,24 @@ function SeleniumFolderUpload() {
 
     return (
         <div className="selenium-folder-upload">
-            <h2>Upload Selenium Folder</h2>
-            <div style={{ marginBottom: 10 }}>
-                <label style={{ marginRight: 10 }}>AI Model:</label>
+            <h2>Selenium Folder Intelligence</h2>
+
+            <div className="model-selector-card">
+                <label>AI Intelligence Level:</label>
                 <select value={aiModel} onChange={e => setAiModel(e.target.value)}>
-                    <option value="groq">Groq API (Cloud)</option>
-                    <option value="ollama">Local Ollama</option>
+                    <option value="groq">Senior QA Architect (Groq Cloud)</option>
+                    <option value="ollama">Standard Analyst (Local Ollama)</option>
                 </select>
             </div>
-            <div style={{ margin: '16px 0' }}>
-                <label htmlFor="selenium-folder-upload-input">
-                    <button type="button" style={{ padding: '8px 18px', fontSize: 16, cursor: 'pointer', background: '#4f46e5', color: 'white', border: 'none', borderRadius: 6 }}
-                        onClick={() => fileInputRef.current && fileInputRef.current.click()}>
-                        📁 Select Selenium Folder
-                    </button>
-                </label>
+
+            <div className="upload-section">
+                <button
+                    className="upload-btn"
+                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                >
+                    📁 {loading ? 'Zipping...' : 'Upload Selenium Automation Folder'}
+                </button>
                 <input
-                    id="selenium-folder-upload-input"
                     ref={fileInputRef}
                     type="file"
                     style={{ display: 'none' }}
@@ -233,80 +251,130 @@ function SeleniumFolderUpload() {
                     multiple
                     onChange={handleFolderChange}
                 />
-                {selectedFolder && <span style={{ marginLeft: 12, fontWeight: 500 }}>Selected: {selectedFolder}</span>}
+                {selectedFolder && <span style={{ marginLeft: 16, fontWeight: 600, color: '#4f46e5' }}>Selected: {selectedFolder}</span>}
             </div>
-            {error && <div className="error">{error}</div>}
-            {loading && <div>Loading...</div>}
-            {fields.length > 0 && (
-                <div className="fields-preview">
-                    <h3>Extracted Locators</h3>
-                    <ul>
-                        {fields.map(f => (
-                            <li key={f}><strong>{f}</strong></li>
-                        ))}
-                    </ul>
+
+            {error && <div style={{ borderLeft: '4px solid #ef4444', background: '#fef2f2', padding: '12px', color: '#b91c1c', borderRadius: 8, marginBottom: 24 }}>{error}</div>}
+
+            {(isExtracting || logs.length > 0) && (
+                <div className="pipeline-terminal">
+                    <div className="terminal-header">
+                        <div className="dot red"></div>
+                        <div className="dot yellow"></div>
+                        <div className="dot green"></div>
+                        <span style={{ marginLeft: 8, color: '#94a3b8', fontSize: 12 }}>EXTRACTION_PIPELINE.LOG</span>
+                    </div>
+                    {logs.map((log, idx) => {
+                        let className = 'log-entry';
+                        if (log.includes('[STEP')) className += ' step';
+                        else if (log.startsWith('   ✓') || log.startsWith('   ⚠') || log.startsWith('     ')) className += ' detail';
+                        else if (log.includes('✓')) className += ' success';
+                        else if (log.includes('⚠')) className += ' warning';
+                        else if (log.includes('✗') || log.includes('[ERROR]')) className += ' error';
+                        else if (log.includes('[SYSTEM]')) className += ' system';
+
+                        return <div key={idx} className={className}>{log}</div>;
+                    })}
+                    {isExtracting && <div className="log-entry system">Running extraction... <span className="blink">|</span></div>}
                 </div>
             )}
-            {extractedDetails.length > 0 && (
-                <div className="fields-preview">
-                    <h3>Extracted Field Details</h3>
-                    <ul>
-                        {extractedDetails.map(field => (
-                            <li key={field.locator}>
-                                <strong>{field.locator}</strong>
-                                {field.matches.length > 0 ? (
-                                    <ul>
-                                        {field.matches.map((m, idx) => (
-                                            <li key={idx}>
-                                                Tag: {m.tag}, Name: {m.name}, ID: {m.id}, Type: {m.type}, Placeholder: {m.placeholder}, Source: {m.source}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                ) : <span> (No matches found)</span>}
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
+
             {showSchemaEditor && (
-                <div className="schema-editor-section">
-                    <h3>Parsed Schema (review & edit)</h3>
-                    {schema && schema.length > 0 && schema.map((field, index) => (
-                        <FieldEditor
-                            key={index}
-                            field={field}
-                            onChange={(k, v) => {
-                                const updated = schema.map((f, i) => i === index ? { ...f, [k]: v } : f);
-                                setSchema(updated);
+                <div className="schema-editor-wrapper">
+                    <h3>Schema Customization & Grouping</h3>
+                    <div style={{ marginBottom: 24 }}>
+                        {schema.map((field, index) => (
+                            <FieldEditor
+                                key={index}
+                                field={field}
+                                onChange={(k, v) => {
+                                    const updated = [...schema];
+                                    updated[index][k] = v;
+                                    setSchema(updated);
+                                }}
+                                onRemove={schema.length > 1 ? () => {
+                                    setSchema(schema.filter((_, i) => i !== index));
+                                } : null}
+                                openTypeModal={() => openTypeModal(index)}
+                                hideExample={true}
+                            />
+                        ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 32 }}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => setSchema([...schema, { name: 'new_field', type: 'string', rules: '', example: '' }])}
+                        >
+                            + Add Field
+                        </button>
+                    </div>
+
+                    <div style={{ background: '#f9fafb', padding: 24, borderRadius: 12, border: '1px solid #e5e7eb' }}>
+                        <GroupEditor
+                            group={groups[0]}
+                            fields={schema}
+                            onChange={(key, value) => {
+                                const newGroups = [...groups];
+                                newGroups[0] = { ...newGroups[0], [key]: value };
+                                setGroups(newGroups);
                             }}
-                            onRemove={schema.length > 1 ? () => {
-                                const updated = schema.filter((_, i) => i !== index);
-                                setSchema(updated);
-                            } : null}
-                            openTypeModal={() => openTypeModal(index)}
                         />
-                    ))}
-                    <TypeModal
-                        show={showTypeModal}
-                        onClose={() => setShowTypeModal(false)}
-                        types={allDataTypes}
-                        onSelect={handleTypeSelect}
-                    />
-                    <button type="button" onClick={() => setSchema([...schema, { name: '', type: 'string', rules: '', example: '' }])} className="add-btn">+ Add Field</button>
-                    <GroupEditor group={groups[0]} fields={schema} onChange={(key, value) => {
-                        const newGroups = [...groups];
-                        newGroups[0] = { ...newGroups[0], [key]: value };
-                        setGroups(newGroups);
-                    }} />
-                    <button onClick={handleConfirmGenerate} style={{ marginTop: 16 }}>Confirm & Generate Data</button>
+                    </div>
+
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleConfirmGenerate}
+                        style={{ marginTop: 24, padding: '14px 28px', fontSize: 18 }}
+                        disabled={loading}
+                    >
+                        {loading ? 'Generating...' : '🚀 Generate Test Data Now'}
+                    </button>
                 </div>
             )}
+
             {generatedData && (
-                <div className="generated-data-section">
-                    <h3>Generated Test Data</h3>
-                    <pre style={{ maxHeight: 300, overflow: 'auto', background: '#f8f8f8', padding: 8 }}>{JSON.stringify(generatedData, null, 2)}</pre>
+                <div style={{ marginTop: 40 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                        <h3>Generated Preview</h3>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                                const csvContent = "data:text/csv;charset=utf-8,"
+                                    + Object.keys(generatedData[0]).join(",") + "\n"
+                                    + generatedData.map(row => Object.values(row).join(",")).join("\n");
+                                const encodedUri = encodeURI(csvContent);
+                                const link = document.createElement("a");
+                                link.setAttribute("href", encodedUri);
+                                link.setAttribute("download", "folder_test_data.csv");
+                                document.body.appendChild(link);
+                                link.click();
+                            }}
+                        >
+                            📥 Download CSV
+                        </button>
+                    </div>
+                    <pre style={{
+                        maxHeight: 400,
+                        overflow: 'auto',
+                        background: '#1e293b',
+                        color: '#f8fafc',
+                        padding: 20,
+                        borderRadius: 12,
+                        fontSize: 13,
+                        border: '1px solid #334155'
+                    }}>
+                        {JSON.stringify(generatedData, null, 2)}
+                    </pre>
                 </div>
             )}
+
+            <TypeModal
+                show={showTypeModal}
+                onClose={() => setShowTypeModal(false)}
+                types={allDataTypes}
+                onSelect={handleTypeSelect}
+            />
         </div>
     );
 }

@@ -100,72 +100,84 @@ class SchemaGenerator:
             return self._generate_schema_rule_based(fields)
     
     def _build_llm_prompt(self, fields: List[Dict[str, Any]]) -> str:
-        """Build prompt for LLM schema generation."""
+        """Build a professional, architect-level prompt for LLM schema generation."""
         # Build field details string
         field_details = self._format_fields_for_prompt(fields)
         
-        prompt = f"""You are an expert form field analyzer. Generate a clean JSON schema for the following form fields.
+        prompt = f"""You are acting as a Senior QA Architect and Test Data Specialist. 
+Your goal is to transform a raw list of UI elements extracted from an automation script into a professional, production-ready Test Data Schema.
 
-CRITICAL RULES:
-- Output exactly ONE entry per field (total: {len(fields)} entries)
-- NO duplicates
-- NO markdown code blocks
-- Output ONLY valid JSON array
-
-For each field, provide:
-- name: snake_case version of the field name
-- type: one of [string, number, email, phone, select, checkbox, radio, combobox, date, textarea]
-- rules: human-readable validation rules
-- description: user-friendly description (remove asterisks and technical jargon)
-- example: realistic sample value
-- confidence: 0.6-1.0 based on field clarity
-
-Type Detection Rules:
-- Email fields → type: "email"
-- Phone/mobile fields → type: "phone"
-- Date/DOB fields → type: "date"
-- Number/amount/income → type: "number"
-- Dropdown/select → type: "select" or "combobox"
-- Checkbox → type: "checkbox"
-- Radio → type: "radio"
-- Text area → type: "textarea"
-- Other text → type: "string"
-
-FIELDS TO ANALYZE:
+### INPUT DATA:
+Below are {len(fields)} UI components detected during script execution:
 {field_details}
 
-Output ONLY the JSON array:"""
+### ARCHITECT'S OBJECTIVES:
+1. **Semantic Entity Recognition**: Look beyond technical IDs. If a field is in a "Personal Information" section with a label "Name", the schema field should be `personal_full_name`.
+2. **Contextual Type Inference**: 
+   - Fields requesting numbers should be `integer` or `float`.
+   - Fields requesting contact info should be `email` or `phone`.
+   - Fields with options must be `select` or `combobox`.
+   - All other text inputs should be `string`.
+3. **Logical Deduplication**: If multiple entries seem to refer to the same logical interaction (e.g., clicking a label then an input), merge them into one professional field definition.
+4. **Rich Rules**: Generate human-readable validation rules that a tester would understand (e.g., "Must be a valid 10-digit mobile number starting with 7-9").
+5. **Production-Ready Examples**: Provide HIGH-QUALITY, realistic examples. No "test" or "asdf". Use "John Doe", "john.doe@example.com", "+91 9876543210", etc.
+
+### OUTPUT FORMAT:
+You MUST return ONLY a valid JSON array of objects. NO EXPLANATIONS. NO MARKDOWN.
+Each object must follow this structure:
+{{
+  "name": "logical_snake_case_name",
+  "type": "string|integer|float|email|phone|date|select|combobox|checkbox|boolean",
+  "description": "Clear purpose of this field",
+  "rules": "Validation constraints in plain English",
+  "example": "Realistic value",
+  "confidence": 0.95
+}}
+
+Analyze the components and generate the schema now:"""
         
         return prompt
     
     def _format_fields_for_prompt(self, fields: List[Dict[str, Any]]) -> str:
-        """Format fields for LLM prompt."""
+        """Format fields with rich technical and semantic context for the LLM."""
         lines = []
         
         for i, field in enumerate(fields, 1):
-            name = field.get('name') or field.get('id') or f'field_{i}'
-            field_type = field.get('type', 'text')
-            label = field.get('label', '')
-            placeholder = field.get('placeholder', '')
-            tag = field.get('tag', 'input')
+            is_verified = field.get('is_verified_locator', False)
+            status = "[PRIMARY/VERIFIED]" if is_verified else "[DISCOVERED]"
+            lines.append(f"COMPONENT #{i} {status}:")
             
-            details = f"{i}. FieldName: {name}"
-            if label:
-                details += f" | Label: {label}"
-            if placeholder:
-                details += f" | Placeholder: {placeholder}"
-            details += f" | Tag: {tag} | Type: {field_type}"
+            # Technical identifiers
+            name = field.get('name') or field.get('id') or f'unknown_field_{i}'
+            if is_verified and field.get('locator_key'):
+                lines.append(f"   Script Locator Key: {field['locator_key']}")
             
+            lines.append(f"   Identifier: {name}")
+            lines.append(f"   HTML Tag: <{field.get('tag', 'input')}>")
+            lines.append(f"   Input Type: {field.get('type', 'text')}")
+            
+            # Semantic cues
+            if field.get('label'):
+                lines.append(f"   Visible Label: {field['label']}")
+            if field.get('placeholder'):
+                lines.append(f"   Placeholder: {field['placeholder']}")
+            if field.get('nearby_context'):
+                lines.append(f"   Nearby Context: {field['nearby_context']}")
+            if field.get('title'):
+                lines.append(f"   Title Attribute: {field['title']}")
+                
+            # Requirements and constraints
             if field.get('required'):
-                details += " | Required: Yes"
+                lines.append("   Constraints: REQUIRED")
             
+            # Options for choice fields
             if field.get('options'):
-                options_preview = [opt.get('label', '') for opt in field['options'][:3]]
-                details += f" | Options: {', '.join(options_preview)}"
-                if len(field['options']) > 3:
-                    details += f" ... ({len(field['options'])} total)"
+                opts = [opt.get('label', '') or opt.get('value', '') for opt in field['options'][:10]]
+                lines.append(f"   Available Options: {', '.join(opts)}")
+                if len(field['options']) > 10:
+                    lines.append(f"   (... and {len(field['options'])-10} more options)")
             
-            lines.append(details)
+            lines.append("")
         
         return '\n'.join(lines)
     

@@ -179,7 +179,7 @@ def extract_select_options(element: Tag) -> List[Dict[str, str]]:
 
 
 def is_visible_field(element: Tag) -> bool:
-    """Check if a form field is visible (not hidden)."""
+    """Check if a form field is visible (not hidden) with higher robustness."""
     input_type = (element.get('type') or '').lower()
     style = (element.get('style') or '').lower()
     
@@ -187,17 +187,24 @@ def is_visible_field(element: Tag) -> bool:
     if input_type == 'hidden':
         return False
     
-    # Hidden via style
-    if 'display:none' in style.replace(' ', '') or 'display: none' in style:
+    # Check for style-based hiding
+    style_patterns = [
+        'display:none', 'display: none',
+        'visibility:hidden', 'visibility: hidden',
+        'opacity:0', 'opacity: 0',
+        'width:0', 'height:0', 'height: 0', 'width: 0'
+    ]
+    if any(p in style.replace(' ', '') for p in style_patterns):
         return False
     
-    if 'visibility:hidden' in style.replace(' ', '') or 'visibility: hidden' in style:
+    # Check for aria-hidden
+    if element.get('aria-hidden') == 'true':
         return False
-    
+
     # Hidden class names (common patterns)
     classes = element.get('class', [])
     if isinstance(classes, list):
-        hidden_classes = ['hidden', 'hide', 'd-none', 'invisible']
+        hidden_classes = ['hidden', 'hide', 'd-none', 'invisible', 'sr-only', 'visually-hidden']
         if any(hc in classes for hc in hidden_classes):
             return False
     
@@ -228,6 +235,14 @@ def extract_field_info(element: Tag, soup: BeautifulSoup) -> Dict[str, Any]:
         'role': element.get('role'),
         'aria-label': element.get('aria-label'),
     }
+    
+    # Extract surrounding context (semantic text nearby)
+    parent = element.find_parent(['div', 'section', 'td', 'tr', 'li'])
+    if parent:
+        # Get all text in the parent container minus the element's own value/text
+        nearby_text = parent.get_text(separator=' ', strip=True)
+        # Limit to 200 chars to avoid prompt bloat
+        field_info['nearby_context'] = nearby_text[:200]
     
     # Extract label
     field_info['label'] = extract_element_label(element, soup)

@@ -40,25 +40,26 @@ async def extract_fields_from_uploaded_folder(
     Returns:
         Dictionary with extracted fields, schema, and metadata
     """
+    logs = []
+
+    def log_step(msg: str):
+        print(msg)
+        logger.info(msg)
+        logs.append(msg)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             # Step 1: Extract uploaded zip file
-            print("="*60)
-            print("[STEP 1] Extracting uploaded zip file...")
-            logger.info("="*60)
-            logger.info("[STEP 1] Extracting uploaded zip file...")
+            log_step("="*60)
+            log_step("[STEP 1] Extracting uploaded zip file...")
             zip_path = await _save_and_extract_zip(file, tmpdir)
-            print(f"[STEP 1] ✓ Extracted to: {tmpdir}")
-            logger.info(f"[STEP 1] ✓ Extracted to: {tmpdir}")
+            log_step(f"[STEP 1] ✓ Extracted to: {tmpdir}")
             
             # Step 2: Identify script and locator files
-            print("[STEP 2] Identifying script and locator files...")
-            logger.info("[STEP 2] Identifying script and locator files...")
+            log_step("[STEP 2] Identifying script and locator files...")
             main_script, locator_files = ScriptAnalyzer.identify_script_files(tmpdir)
-            print(f"[STEP 2] ✓ Found main script: {os.path.basename(main_script) if main_script else 'None'}")
-            print(f"[STEP 2] ✓ Found {len(locator_files)} locator files: {[os.path.basename(f) for f in locator_files]}")
-            logger.info(f"[STEP 2] ✓ Found main script: {os.path.basename(main_script) if main_script else 'None'}")
-            logger.info(f"[STEP 2] ✓ Found {len(locator_files)} locator files: {[os.path.basename(f) for f in locator_files]}")
+            log_step(f"[STEP 2] ✓ Found main script: {os.path.basename(main_script) if main_script else 'None'}")
+            log_step(f"[STEP 2] ✓ Found {len(locator_files)} locator files: {[os.path.basename(f) for f in locator_files]}")
             
             if not main_script:
                 raise HTTPException(
@@ -67,202 +68,152 @@ async def extract_fields_from_uploaded_folder(
                 )
             
             # Step 3: Read script content
-            print("[STEP 3] Reading script content...")
-            logger.info("[STEP 3] Reading script content...")
+            log_step("[STEP 3] Reading script content...")
             with open(main_script, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            print(f"[STEP 3] ✓ Read {len(script_content)} characters from script")
-            logger.info(f"[STEP 3] ✓ Read {len(script_content)} characters from script")
+            log_step(f"[STEP 3] ✓ Read {len(script_content)} characters from script")
             
             # Step 4: Extract metadata from script
-            print("[STEP 4] Extracting metadata from script...")
-            logger.info("[STEP 4] Extracting metadata from script...")
+            log_step("[STEP 4] Extracting metadata from script...")
             target_url = ScriptAnalyzer.extract_url(script_content)
             locator_refs = ScriptAnalyzer.extract_locator_references(script_content)
             actions = ScriptAnalyzer.extract_actions(script_content)
-            print(f"[STEP 4] ✓ Extracted URL: {target_url}")
-            print(f"[STEP 4] ✓ Found {len(locator_refs)} locator references")
-            print(f"[STEP 4] ✓ Found {len(actions)} actions")
-            logger.info(f"[STEP 4] ✓ Extracted URL: {target_url}")
-            logger.info(f"[STEP 4] ✓ Found {len(locator_refs)} locator references")
-            logger.info(f"[STEP 4] ✓ Found {len(actions)} actions")
+            log_step(f"[STEP 4] ✓ Extracted URL: {target_url}")
+            log_step(f"[STEP 4] ✓ Found {len(locator_refs)} locator references")
+            log_step(f"[STEP 4] ✓ Found {len(actions)} actions")
             
             if not target_url:
                 # Try to find URL in locator files as fallback
-                logger.warning(f"No URL found in {os.path.basename(main_script)}, checking locator files...")
+                log_step(f"   ⚠ No URL found in {os.path.basename(main_script)}, checking locator files...")
                 for locator_file in locator_files:
                     try:
                         with open(locator_file, 'r', encoding='utf-8') as f:
                             locator_content = f.read()
                         fallback_url = ScriptAnalyzer.extract_url(locator_content)
                         if fallback_url:
-                            logger.info(f"Found URL in {os.path.basename(locator_file)}: {fallback_url}")
+                            log_step(f"   ✓ Found URL in {os.path.basename(locator_file)}: {fallback_url}")
                             target_url = fallback_url
                             break
                     except Exception as e:
                         logger.warning(f"Could not read {locator_file}: {e}")
             
             if not target_url:
-                # Provide more helpful error message with all files checked
-                script_preview = script_content[:500] if len(script_content) > 500 else script_content
-                logger.warning(f"Could not find URL in script: {os.path.basename(main_script)}")
-                logger.warning(f"Script preview: {script_preview}")
-                
-                all_py_files = []
-                for root, dirs, files in os.walk(tmpdir):
-                    all_py_files.extend([f for f in files if f.endswith('.py')])
-                
                 raise HTTPException(
                     status_code=400,
-                    detail=(
-                        f"Could not find target URL in {os.path.basename(main_script)}. "
-                        f"Python files in folder: {', '.join(all_py_files)}. "
-                        "Please ensure at least one file contains: "
-                        "driver.get('url'), url='https://...', or TARGET_URL='https://...'. "
-                        "You can add it at the top of your main script or in the locators config file."
-                    )
+                    detail=f"Could not find target URL in {os.path.basename(main_script)} or locator files."
                 )
             
             # Step 5: Parse locator configurations
-            print("[STEP 5] Parsing locator configurations...")
-            logger.info("[STEP 5] Parsing locator configurations...")
+            log_step("[STEP 5] Parsing locator configurations...")
             all_locators = {}
             for locator_file in locator_files:
                 try:
                     parsed = LocatorParser.parse_file(locator_file)
                     normalized = LocatorParser.normalize_locator_data(parsed)
                     all_locators.update(normalized)
-                    print(f"[STEP 5] ✓ Parsed {len(normalized)} locators from {os.path.basename(locator_file)}")
-                    logger.info(f"[STEP 5] ✓ Parsed {len(normalized)} locators from {os.path.basename(locator_file)}")
+                    log_step(f"[STEP 5] ✓ Parsed {len(normalized)} locators from {os.path.basename(locator_file)}")
                 except Exception as e:
-                    print(f"[STEP 5] ✗ Failed to parse {locator_file}: {e}")
-                    logger.warning(f"[STEP 5] ✗ Failed to parse {locator_file}: {e}")
+                    log_step(f"[STEP 5] ✗ Failed to parse {locator_file}: {e}")
             
-            print(f"[STEP 5] ✓ Total locators parsed: {len(all_locators)}")
-            logger.info(f"[STEP 5] ✓ Total locators parsed: {len(all_locators)}")
-            if not all_locators:
-                print("[STEP 5] ⚠ No locators parsed, will extract all fields from HTML")
-                logger.warning("[STEP 5] ⚠ No locators parsed, will extract all fields from HTML")
+            log_step(f"[STEP 5] ✓ Total locators parsed: {len(all_locators)}")
             
             # Step 6: Extract fields from HTML
-            print("[STEP 6] Starting HTML field extraction with Selenium...")
-            logger.info("[STEP 6] Starting HTML field extraction with Selenium...")
+            log_step("[STEP 6] Starting HTML field extraction with Selenium...")
             fields_by_locator = {}
             all_fields = []
             page_sources = []
             
             with HTMLFieldExtractor() as extractor:
-                print("[STEP 6] Selenium WebDriver initialized")
-                logger.info("[STEP 6] Selenium WebDriver initialized")
-                # Navigate and extract fields
-                print(f"[STEP 6] Navigating to {target_url} and extracting fields...")
-                logger.info(f"[STEP 6] Navigating to {target_url} and extracting fields...")
+                log_step("[STEP 6] Selenium WebDriver initialized")
+                log_step(f"[STEP 6] Navigating to {target_url} and extracting fields...")
+                
+                # Custom logging for extractor
+                def extractor_log(msg): log_step(f"[STEP 6] {msg}")
+                
+                # Capture pages and fields - increased limit to 100 for complex scripts
                 page_sources, all_fields = extractor.navigate_and_extract(
                     url=target_url,
                     actions=actions,
                     locators=all_locators,
-                    max_pages=20
+                    max_pages=100,
+                    log_callback=extractor_log
                 )
-                print(f"[STEP 6] ✓ Captured {len(page_sources)} pages")
-                print(f"[STEP 6] ✓ Extracted {len(all_fields)} fields (before deduplication)")
-                logger.info(f"[STEP 6] ✓ Captured {len(page_sources)} pages")
-                logger.info(f"[STEP 6] ✓ Extracted {len(all_fields)} fields (before deduplication)")
+                log_step(f"[STEP 6] ✓ Captured {len(page_sources)} pages")
+                log_step(f"[STEP 6] ✓ Extracted {len(all_fields)} fields (before deduplication)")
                 
-                # If locators are available, also extract specific matches
                 if all_locators and locator_refs:
-                    print(f"[STEP 6] Extracting fields by {len(locator_refs)} specific locators...")
-                    logger.info(f"[STEP 6] Extracting fields by {len(locator_refs)} specific locators...")
+                    log_step(f"[STEP 6] Extracting fields by {len(locator_refs)} specific locators from script...")
                     combined_html = '\n'.join(page_sources)
                     fields_by_locator = extractor.extract_fields_by_locators(
                         html_content=combined_html,
                         locators=all_locators,
                         locator_keys=locator_refs
                     )
-                    print(f"[STEP 6] ✓ Found {len(fields_by_locator)} fields by locator")
-                    logger.info(f"[STEP 6] ✓ Found {len(fields_by_locator)} fields by locator")
+                    log_step(f"[STEP 6] ✓ Found {len(fields_by_locator)} fields by locator")
+                    
+                    # Log specific locator matches for transparency
+                    for loc_key, matched_list in fields_by_locator.items():
+                        if matched_list:
+                            field = matched_list[0]
+                            name = field.get('label') or field.get('name') or field.get('id')
+                            log_step(f"   ✓ {loc_key} matched: {name}")
+
+                    locator_matched_list = []
+                    for loc_key, matched_list in fields_by_locator.items():
+                        for field in matched_list:
+                            field['is_verified_locator'] = True
+                            field['locator_key'] = loc_key
+                            locator_matched_list.append(field)
+                    
+                    all_fields = locator_matched_list + all_fields
                 
-                # Deduplicate fields
                 all_fields = extractor.deduplicate_fields(all_fields)
-                print(f"[STEP 6] ✓ After deduplication: {len(all_fields)} unique fields")
-                logger.info(f"[STEP 6] ✓ After deduplication: {len(all_fields)} unique fields")
+                log_step(f"[STEP 6] ✓ After deduplication: {len(all_fields)} unique fields")
             
-            print(f"[STEP 6] ✓ Total unique fields extracted: {len(all_fields)}")
-            logger.info(f"[STEP 6] ✓ Total unique fields extracted: {len(all_fields)}")
+            log_step(f"[STEP 6] ✓ Total unique fields extracted: {len(all_fields)}")
             
-            # Step 7: Generate schema using LLM or rule-based approach
+            # Step 7: Generate schema using LLM
             form = await request.form()
             ai_model = form.get("ai_model", "ollama")
-            print(f"[STEP 7] Generating schema using AI model: {ai_model}")
-            logger.info(f"[STEP 7] Generating schema using AI model: {ai_model}")
+            log_step(f"[STEP 7] Generating schema using AI model: {ai_model}")
             
             try:
                 llm = LLMFactory.create_llm(provider=ai_model)
                 schema_gen = SchemaGenerator(llm=llm)
-                print("[STEP 7] Using LLM for schema generation...")
-                logger.info("[STEP 7] Using LLM for schema generation...")
+                log_step("[STEP 7] Using LLM for schema generation...")
                 parsed_schema = schema_gen.generate_schema(all_fields, use_llm=True)
-                print(f"[STEP 7] ✓ LLM generated {len(parsed_schema)} schema entries")
-                logger.info(f"[STEP 7] ✓ LLM generated {len(parsed_schema)} schema entries")
+                log_step(f"[STEP 7] ✓ LLM generated {len(parsed_schema)} schema entries")
             except Exception as e:
-                print(f"[STEP 7] ✗ LLM schema generation failed: {e}")
-                logger.warning(f"[STEP 7] ✗ LLM schema generation failed: {e}")
-                print("[STEP 7] Falling back to rule-based schema generation...")
-                logger.info("[STEP 7] Falling back to rule-based schema generation...")
+                log_step(f"[STEP 7] ✗ LLM schema generation failed: {e}")
+                log_step("[STEP 7] Falling back to rule-based schema generation...")
                 schema_gen = SchemaGenerator(llm=None)
                 parsed_schema = schema_gen.generate_schema(all_fields, use_llm=False)
-                print(f"[STEP 7] ✓ Rule-based generation created {len(parsed_schema)} schema entries")
-                logger.info(f"[STEP 7] ✓ Rule-based generation created {len(parsed_schema)} schema entries")
+                log_step(f"[STEP 7] ✓ Rule-based generation created {len(parsed_schema)} schema entries")
             
-            # Step 8: Deduplicate and validate schema
-            print("[STEP 8] Post-processing schema...")
-            logger.info("[STEP 8] Post-processing schema...")
+            # Step 8: Post-processing schema
+            log_step("[STEP 8] Post-processing schema...")
             parsed_schema = schema_gen.deduplicate_schema(parsed_schema)
-            print(f"[STEP 8] ✓ After deduplication: {len(parsed_schema)} schema entries")
-            logger.info(f"[STEP 8] ✓ After deduplication: {len(parsed_schema)} schema entries")
+            log_step(f"[STEP 8] ✓ After deduplication: {len(parsed_schema)} schema entries")
             parsed_schema = schema_gen.merge_field_metadata(parsed_schema, all_fields)
-            print("[STEP 8] ✓ Merged field metadata")
-            logger.info("[STEP 8] ✓ Merged field metadata")
+            log_step("[STEP 8] ✓ Merged field metadata")
             
             is_valid, errors = schema_gen.validate_schema(parsed_schema)
-            print(f"[STEP 8] ✓ Schema validation: {'VALID' if is_valid else 'INVALID'}")
-            logger.info(f"[STEP 8] ✓ Schema validation: {'VALID' if is_valid else 'INVALID'}")
-            if not is_valid:
-                print(f"[STEP 8] ⚠ Schema validation issues: {errors}")
-                logger.warning(f"[STEP 8] ⚠ Schema validation issues: {errors}")
-                # If schema is empty, try to generate from all_fields as fallback
-                if not parsed_schema and all_fields:
-                    print("[STEP 8] Generating fallback schema from raw fields...")
-                    logger.info("[STEP 8] Generating fallback schema from raw fields...")
-                    schema_gen_fallback = SchemaGenerator(llm=None)
-                    parsed_schema = schema_gen_fallback.generate_schema(all_fields, use_llm=False)
-                    print(f"[STEP 8] ✓ Fallback generated {len(parsed_schema)} schema entries")
-                    logger.info(f"[STEP 8] ✓ Fallback generated {len(parsed_schema)} schema entries")
+            log_step(f"[STEP 8] ✓ Schema validation: {'VALID' if is_valid else 'INVALID'}")
             
             # Step 9: Prepare consolidated field list
             logger.info("[STEP 9] Preparing consolidated field list...")
             consolidated_fields = _prepare_consolidated_fields(all_fields)
-            logger.info(f"[STEP 9] ✓ Prepared {len(consolidated_fields)} consolidated fields")
             
             # Step 10: Return comprehensive response
-            print("="*60)
-            print("✓ EXTRACTION COMPLETE!")
-            print(f"  - Script: {os.path.basename(main_script)}")
-            print(f"  - URL: {target_url}")
-            print(f"  - Pages: {len(page_sources)}")
-            print(f"  - Fields: {len(all_fields)}")
-            print(f"  - Schema: {len(parsed_schema)} entries")
-            print(f"  - Valid: {is_valid}")
-            print("="*60)
-            logger.info("[STEP 10] Building response...")
-            logger.info("="*60)
-            logger.info("✓ EXTRACTION COMPLETE!")
-            logger.info(f"  - Script: {os.path.basename(main_script)}")
-            logger.info(f"  - URL: {target_url}")
-            logger.info(f"  - Pages: {len(page_sources)}")
-            logger.info(f"  - Fields: {len(all_fields)}")
-            logger.info(f"  - Schema: {len(parsed_schema)} entries")
-            logger.info(f"  - Valid: {is_valid}")
-            logger.info("="*60)
+            log_step("="*60)
+            log_step("✓ EXTRACTION COMPLETE!")
+            log_step(f"  - Script: {os.path.basename(main_script)}")
+            log_step(f"  - URL: {target_url}")
+            log_step(f"  - Pages: {len(page_sources)}")
+            log_step(f"  - Fields: {len(all_fields)}")
+            log_step(f"  - Schema: {len(parsed_schema)} entries")
+            log_step(f"  - Valid: {is_valid}")
+            log_step("="*60)
             
             return {
                 "success": True,
@@ -278,7 +229,8 @@ async def extract_fields_from_uploaded_folder(
                 "parsed_schema": parsed_schema,
                 "schema_valid": is_valid,
                 "schema_errors": errors if errors else None,
-                "ai_model_used": ai_model
+                "ai_model_used": ai_model,
+                "logs": logs
             }
         
         except HTTPException:

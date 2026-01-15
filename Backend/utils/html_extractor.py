@@ -67,36 +67,29 @@ class HTMLFieldExtractor:
             logger.info("Selenium WebDriver closed")
     
     def navigate_to_url(self, url: str) -> str:
-        """Navigate to URL and return page source."""
+        """Navigate to URL and return page source with robust loading."""
         self.setup_driver()
         logger.info(f"Navigating to {url}")
         self.driver.get(url)
         
-        # Wait for page to load completely
+        # Wait for page to load completely with dynamic wait
         try:
+            # First wait for document ready
             WebDriverWait(self.driver, 15).until(
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
-        except:
-            pass  # Continue even if timeout
+            # Then wait for any initial animations/scripts
+            time.sleep(2)
+        except Exception as e:
+            logger.warning(f"Wait during navigation failed: {e}")
         
-        time.sleep(self.wait_time)
         return self.driver.page_source
     
     def execute_action(self, action: Dict[str, Any], locators: Dict[str, Any]) -> bool:
-        """
-        Execute a single action using locator information.
-        
-        Args:
-            action: Action dict with 'type', 'locator', and optional params
-            locators: Normalized locator data
-        
-        Returns:
-            True if action succeeded, False otherwise
-        """
+        """Execute a single Selenium action with robust finding and execution."""
         if not self.driver:
             return False
-        
+            
         action_type = action.get('type')
         locator_key = action.get('locator')
         locator_info = locators.get(locator_key, {})
@@ -104,162 +97,193 @@ class HTMLFieldExtractor:
         if not locator_info:
             logger.debug(f"No locator info found for {locator_key}")
             return False
-        
-        # Try different locator strategies
+            
+        # 1. FIND ELEMENT (Omni-Search logic handles iframes)
         element = self._find_element(locator_info)
         if not element:
-            logger.debug(f"Element not found for {locator_key}")
+            logger.debug(f"Element not found for {locator_key} (even in iframes)")
             return False
-        
+            
         try:
             if action_type == 'click':
-                # Scroll element into view
-                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-                time.sleep(0.5)  # Wait for scroll
+                return self._force_click(element, locator_key)
                 
-                # Wait for element to be clickable
-                wait = WebDriverWait(self.driver, 5)
-                element = wait.until(EC.element_to_be_clickable(element))
-                
-                element.click()
-                logger.info(f"Clicked element: {locator_key}")
-                time.sleep(2)  # Wait for navigation
-                return True
-            
             elif action_type == 'send_keys':
-                # Scroll element into view
                 self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
                 time.sleep(0.5)
-                
                 value = action.get('value', '')
-                element.clear()
-                element.send_keys(value)
+                try:
+                    element.clear()
+                    element.send_keys(value)
+                except:
+                    # Fallback for send_keys via JS if element is stubborn
+                    self.driver.execute_script("arguments[0].value = arguments[1];", element, value)
+                    self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", element)
                 logger.info(f"Sent keys to {locator_key}: {value}")
                 return True
-            
+                
             elif action_type == 'select':
                 from selenium.webdriver.support.select import Select
-                select = Select(element)
+                select_obj = Select(element)
                 option = action.get('option', '')
-                select.select_by_visible_text(option)
+                select_obj.select_by_visible_text(option)
                 logger.info(f"Selected option in {locator_key}: {option}")
                 return True
-            
+                
+            elif action_type == 'hover':
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                time.sleep(0.5)
+                from selenium.webdriver.common.action_chains import ActionChains
+                chains = ActionChains(self.driver)
+                chains.move_to_element(element).perform()
+                logger.info(f"Hovered over element: {locator_key}")
+                time.sleep(1)
+                return True
+                
             elif action_type == 'wait':
                 logger.info(f"Waiting for element: {locator_key}")
                 return True
-        
+                
         except Exception as e:
-            # Extract clean error message
-            error_str = str(e)
-            error_type = type(e).__name__
-            
-            # Handle Selenium error format: "Message: error_text\nStacktrace:..."
-            if 'Message:' in error_str:
-                parts = error_str.split('\nStacktrace:')[0].split('Message:', 1)
-                if len(parts) > 1 and parts[1].strip():
-                    error_msg = parts[1].strip()
-                else:
-                    # Message is empty, use error type
-                    error_msg = error_type
-            else:
-                error_msg = error_str.split('\n')[0] if '\n' in error_str else error_str
-            
-            # Fallback to exception type if message is empty or just whitespace
-            if not error_msg or not error_msg.strip():
-                error_msg = error_type
-            
-            # Truncate if too long but show meaningful part
-            if len(error_msg) > 150:
-                error_msg = error_msg[:150] + '...'
-            
+            error_msg = str(e).split('\n')[0]
             logger.debug(f"Failed to execute {action_type} on {locator_key}: {error_msg}")
             print(f"[STEP 6] ⚠ Action failed ({action_type} on {locator_key}): {error_msg}")
             import sys
             sys.stdout.flush()
             return False
-        
+            
         return False
-    
-    def _find_element(self, locator_info: Dict[str, List[str]], wait_time: int = 3):
-        """Try to find element using multiple locator strategies with fast wait time."""
-        wait = WebDriverWait(self.driver, wait_time)
+
+    def _find_element(self, locator_info: Dict[str, List[str]], wait_time: int = 10):
+        """Try to find element searching through main document and all iframes."""
+        strategies = [
+            (By.CSS_SELECTOR, locator_info.get('css', [])),
+            (By.XPATH, locator_info.get('xpath', [])),
+            (By.ID, locator_info.get('id', [])),
+            (By.NAME, locator_info.get('name', []))
+        ]
         
-        # Try CSS selectors
-        for css_sel in locator_info.get('css', []):
+        # 1. Main document
+        self.driver.switch_to.default_content()
+        for by, selectors in strategies:
+            for selector in selectors:
+                try:
+                    element = WebDriverWait(self.driver, wait_time).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    return element
+                except:
+                    continue
+        
+        # 2. Iframes
+        iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+        for i, iframe in enumerate(iframes):
             try:
-                element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, css_sel)))
-                return element
+                self.driver.switch_to.frame(iframe)
+                for by, selectors in strategies:
+                    for selector in selectors:
+                        try:
+                            element = WebDriverWait(self.driver, 2).until(
+                                EC.presence_of_element_located((by, selector))
+                            )
+                            return element
+                        except:
+                            continue
+                self.driver.switch_to.default_content()
             except:
+                self.driver.switch_to.default_content()
                 continue
-        
-        # Try XPath
-        for xpath in locator_info.get('xpath', []):
-            try:
-                element = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
-                return element
-            except:
-                continue
-        
-        # Try ID
-        for elem_id in locator_info.get('id', []):
-            try:
-                element = wait.until(EC.presence_of_element_located((By.ID, elem_id)))
-                return element
-            except:
-                continue
-        
-        # Try name
-        for name in locator_info.get('name', []):
-            try:
-                element = wait.until(EC.presence_of_element_located((By.NAME, name)))
-                return element
-            except:
-                continue
-        
         return None
+
+    def _force_click(self, element, locator_key: str):
+        """Standard click falling back to Hover + JS 'Overlay Buster'."""
+        try:
+            # 1. Standard scroll and click
+            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+            time.sleep(0.5)
+            element.click()
+            return True
+        except:
+            # 2. Hover Fallback: Some elements need a hover to become interactive/visible
+            try:
+                from selenium.webdriver.common.action_chains import ActionChains
+                chains = ActionChains(self.driver)
+                chains.move_to_element(element).perform()
+                time.sleep(0.5)
+                # Try clicking after hover
+                element.click()
+                return True
+            except:
+                # 3. JS Click (Overlay Buster)
+                try:
+                    self.driver.execute_script("arguments[0].click();", element)
+                    return True
+                except:
+                    return False
     
     def extract_fields_from_html(self, html_content: str) -> List[Dict[str, Any]]:
         """
-        Extract all visible form fields from HTML content.
-        
-        Args:
-            html_content: HTML document content
-        
-        Returns:
-            List of extracted field dictionaries
+        Extract visible form fields from main document and all iframes.
         """
-        soup = BeautifulSoup(html_content, 'html.parser')
-        fields = []
+        all_found_fields = []
         
-        # Extract input fields
+        # 1. Extract from the main page source (provided)
+        soup = BeautifulSoup(html_content, 'html.parser')
+        main_fields = self._extract_from_soup(soup)
+        all_found_fields.extend(main_fields)
+        
+        # 2. Extract from iframes (live check via driver)
+        if self.driver:
+            try:
+                iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                for i, iframe in enumerate(iframes):
+                    try:
+                        self.driver.switch_to.frame(iframe)
+                        iframe_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                        iframe_fields = self._extract_from_soup(iframe_soup)
+                        for f in iframe_fields:
+                            f['source_iframe'] = f"iframe_{i}"
+                        all_found_fields.extend(iframe_fields)
+                        self.driver.switch_to.default_content()
+                    except:
+                        self.driver.switch_to.default_content()
+                        continue
+            except Exception as e:
+                logger.warning(f"Failed to scan iframes for fields: {e}")
+                
+        logger.info(f"Extracted {len(all_found_fields)} fields from document (+iframes)")
+        return all_found_fields
+
+    def _extract_from_soup(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Internal helper for extracting from a soup object."""
+        fields = []
+        # Input fields
         for input_elem in soup.find_all('input'):
             if is_visible_field(input_elem):
                 field_info = extract_field_info(input_elem, soup)
                 if field_info.get('name') or field_info.get('id'):
                     fields.append(field_info)
         
-        # Extract select fields
+        # Select fields
         for select_elem in soup.find_all('select'):
             if is_visible_field(select_elem):
                 field_info = extract_field_info(select_elem, soup)
                 if field_info.get('name') or field_info.get('id'):
                     fields.append(field_info)
         
-        # Extract textarea fields
+        # Textarea fields
         for textarea_elem in soup.find_all('textarea'):
             if is_visible_field(textarea_elem):
                 field_info = extract_field_info(textarea_elem, soup)
                 if field_info.get('name') or field_info.get('id'):
                     fields.append(field_info)
         
-        # Extract combobox fields (role="combobox")
+        # Combobox fields
         for elem in soup.find_all(attrs={"role": "combobox"}):
             field_info = extract_field_info(elem, soup)
             if field_info.get('name') or field_info.get('id') or field_info.get('aria-label'):
                 fields.append(field_info)
-        
-        logger.info(f"Extracted {len(fields)} fields from HTML")
+                
         return fields
     
     def extract_fields_by_locators(
@@ -333,71 +357,64 @@ class HTMLFieldExtractor:
         url: str,
         actions: List[Dict[str, Any]],
         locators: Dict[str, Any],
-        max_pages: int = 10
+        max_pages: int = 10,
+        log_callback=None
     ) -> Tuple[List[str], List[Dict[str, Any]]]:
         """
-        Navigate through pages and extract HTML from each step.
-        
-        Args:
-            url: Starting URL
-            actions: List of actions to execute
-            locators: Normalized locator data
-            max_pages: Maximum number of pages to capture
-        
-        Returns:
-            Tuple of (page_sources, all_extracted_fields)
+        Navigate through pages and extract HTML from each step with logging.
         """
+        def log(msg):
+            if log_callback: log_callback(msg)
+            logger.info(msg)
         page_sources = []
         all_fields = []
         successful_actions = 0
         failed_actions = 0
         
         # Navigate to initial page
+        log(f"Navigating to initial URL: {url}")
         page_source = self.navigate_to_url(url)
         page_sources.append(page_source)
         
         # Extract fields from first page
         fields = self.extract_fields_from_html(page_source)
         all_fields.extend(fields)
-        logger.info(f"Page 1: Extracted {len(fields)} fields")
+        
+        # Log specific field names for transparency
+        field_names = [f.get('label') or f.get('placeholder') or f.get('name') or f.get('id') for f in fields]
+        field_names = [name for name in field_names if name]
+        field_summary = ", ".join(field_names[:5])
+        if len(field_names) > 5:
+            field_summary += f" (+{len(field_names)-5} more)"
+            
+        log(f"Page 1 capture complete. Extracted {len(fields)} fields: [{field_summary}]")
         
         # Execute actions and capture subsequent pages
         pages_captured = 1
         last_url = self.driver.current_url if self.driver else url
         
-        print(f"[STEP 6] Executing {len(actions)} actions...")
-        import sys
-        sys.stdout.flush()
+        log(f"Executing {len(actions)} actions from script...")
         
-        consecutive_failures = 0
-        max_consecutive_failures = 5  # Stop trying actions after 5 consecutive failures
-        
+        # Execute all actions regardless of consecutive failures
         for i, action in enumerate(actions, 1):
+            # Check page limit
             if pages_captured >= max_pages:
-                logger.info(f"Reached max pages limit: {max_pages}")
-                break
-            
-            # Early exit if too many consecutive failures
-            if consecutive_failures >= max_consecutive_failures:
-                print(f"[STEP 6] ⚠ Stopping action execution after {consecutive_failures} consecutive failures")
-                sys.stdout.flush()
+                log(f"⚠ Reached max pages limit ({max_pages}). Stopping further actions to prevent infinite loops.")
                 break
             
             # Show progress
             action_type = action.get('type', 'unknown')
             locator_key = action.get('locator', 'unknown')
-            print(f"[STEP 6] Action {i}/{len(actions)}: {action_type} on {locator_key}...")
-            sys.stdout.flush()
+            log(f"Action {i}/{len(actions)}: {action_type} on {locator_key}...")
             
             # Execute action
             success = self.execute_action(action, locators)
             
             if success:
                 successful_actions += 1
-                consecutive_failures = 0  # Reset on success
             else:
                 failed_actions += 1
-                consecutive_failures += 1
+                # Continue to next action even on failure
                 continue
             
             # Check if page changed
@@ -416,16 +433,19 @@ class HTMLFieldExtractor:
                     # Extract fields
                     fields = self.extract_fields_from_html(new_source)
                     all_fields.extend(fields)
-                    logger.info(f"Page {pages_captured}: Extracted {len(fields)} fields")
+                    
+                    # Log specific field names for transparency
+                    field_names = [f.get('label') or f.get('placeholder') or f.get('name') or f.get('id') for f in fields[:10]]
+                    field_names = [name for name in field_names if name]
+                    field_summary = ", ".join(field_names[:5])
+                    if len(field_names) > 5:
+                        field_summary += f" (+{len(field_names)-5} more)"
+                    
+                    log(f"Page {pages_captured} capture complete. Extracted {len(fields)} fields: [{field_summary}]")
                     
                     last_url = current_url
         
-        print(f"[STEP 6] Action execution complete: {successful_actions} successful, {failed_actions} failed")
-        logger.info(f"Total pages captured: {len(page_sources)}")
-        logger.info(f"Total fields extracted: {len(all_fields)}")
-        logger.info(f"Actions: {successful_actions} successful, {failed_actions} failed")
-        import sys
-        sys.stdout.flush()
+        log(f"Action execution complete: {successful_actions} successful, {failed_actions} failed")
         
         return page_sources, all_fields
     
