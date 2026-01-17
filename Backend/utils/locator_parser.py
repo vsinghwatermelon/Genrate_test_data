@@ -31,30 +31,60 @@ class LocatorParser:
         # Try safe execution first
         try:
             exec_context = {}
-            exec(content, {}, exec_context)
+            # Use a fresh dict for globals to avoid pollution
+            exec(content, {"__builtins__": __builtins__}, exec_context)
             
-            # Look for common locator variable names
+            # 1. Look for common locator variable names
             for var_name in ['locators', 'LOCATORS', 'elements', 'ELEMENTS', 'selectors', 'SELECTORS']:
-                if var_name in exec_context:
+                if var_name in exec_context and isinstance(exec_context[var_name], dict):
                     return exec_context[var_name]
+            
+            # 2. If no standard variable found, collect everything that looks like a locator
+            # (starts with locator_ or ends with _locator, etc.)
+            collected = {}
+            for name, val in exec_context.items():
+                if name.startswith('__'): continue
+                name_lower = name.lower()
+                if any(k in name_lower for k in ['locator', 'element', 'selector', 'btn', 'input', 'field']):
+                    if isinstance(val, (dict, list, tuple, str)):
+                        collected[name] = val
+            
+            if collected:
+                return collected
+
         except Exception as e:
             print(f"[WARNING] exec() failed: {e}, trying AST parsing...")
         
         # Fallback to AST parsing
         try:
             tree = ast.parse(content)
+            collected = {}
             for node in ast.walk(tree):
                 if isinstance(node, ast.Assign):
                     for target in node.targets:
                         if isinstance(target, ast.Name):
-                            var_name = target.id.lower()
-                            if 'locator' in var_name or 'element' in var_name or 'selector' in var_name:
+                            var_name = target.id
+                            if var_name.startswith('__'): continue
+                            
+                            # If it's one of the main variables, return its value immediately if it's a dict
+                            if var_name.lower() in ['locators', 'elements', 'selectors']:
                                 try:
                                     return ast.literal_eval(node.value)
                                 except:
                                     pass
+                            
+                            # Otherwise collect it
+                            if any(k in var_name.lower() for k in ['locator', 'element', 'selector']):
+                                try:
+                                    collected[var_name] = ast.literal_eval(node.value)
+                                except:
+                                    pass
+            if collected:
+                return collected
         except Exception as e:
             print(f"[WARNING] AST parsing failed: {e}")
+        
+        return {}
         
         return {}
     

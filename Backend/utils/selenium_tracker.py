@@ -397,6 +397,77 @@ class SeleniumActionTracker:
         except Exception as e:
             logger.error(f"Error tracking input for {locator}: {str(e)}")
     
+    def track_hover(self, element: WebElement, locator: str, description: str = ""):
+        """
+        Track a hover action
+        """
+        try:
+            # Re-verify element is still attached to DOM if possible
+            try:
+                _ = element.tag_name
+            except:
+                # If stale, we won't be able to extract info perfectly, but let's try
+                logger.warning(f"Element for {locator} went stale before tracking hover info")
+            
+            element_info = self._extract_element_info(element, locator, "hover", description)
+            self.actions_log.append(element_info)
+            logger.info(f"[HOVER] {locator} | Purpose: {element_info.get('exact_purpose', 'unknown')}")
+            print(f"[HOVER] {locator} | Purpose: {element_info.get('exact_purpose', 'unknown')}")
+        except Exception as e:
+            logger.error(f"Error tracking hover for {locator}: {str(e)}")
+            # Even if extraction fails, log that a hover happened
+            self.actions_log.append({
+                "action": "hover",
+                "locator": locator,
+                "description": description or "Hover tracked (info extraction failed)",
+                "tag_name": "unknown"
+            })
+
+    def track_verification(self, element: WebElement, locator: str, expected_text: str, actual_text: str, success: bool):
+        """
+        Track a verification action
+        """
+        try:
+            element_info = self._extract_element_info(element, locator, "verify")
+            element_info.update({
+                "expected_text": expected_text,
+                "actual_text": actual_text,
+                "success": success
+            })
+            self.actions_log.append(element_info)
+            status = "✓" if success else "✗"
+            logger.info(f"[VERIFY] {status} {locator} | Expected: {expected_text} | Actual: {actual_text}")
+            print(f"[VERIFY] {status} {locator} | Expected: {expected_text} | Actual: {actual_text}")
+        except Exception as e:
+            logger.error(f"Error tracking verification for {locator}: {str(e)}")
+
+    def track_get_text(self, element: WebElement, locator: str, text: str):
+        """
+        Track a text retrieval action
+        """
+        try:
+            element_info = self._extract_element_info(element, locator, "get_text")
+            element_info["retrieved_text"] = text
+            self.actions_log.append(element_info)
+            logger.info(f"[GET_TEXT] {locator} | Value: {text[:50]}...")
+            print(f"[GET_TEXT] {locator} | Value: {text[:50]}...")
+        except Exception as e:
+            logger.error(f"Error tracking get_text for {locator}: {str(e)}")
+
+    def track_tab_switch(self, tab_index_or_handle, description: str = ""):
+        """
+        Track a tab switch
+        """
+        info = {
+            "action": "switch_tab",
+            "tab": str(tab_index_or_handle),
+            "description": description,
+            "locator": "browser",
+            "tag_name": "browser"
+        }
+        self.actions_log.append(info)
+        print(f"[TAB] Switched to tab: {tab_index_or_handle}")
+
     def get_summary(self) -> Dict[str, Any]:
         """
         Get a summary of all tracked actions
@@ -408,9 +479,13 @@ class SeleniumActionTracker:
             "clicked_elements": self.clicked_elements,
             "filled_fields": self.filled_fields,
             "actions_log": self.actions_log,
+            "verifications": [a for a in self.actions_log if a.get('action') == 'verify'],
+            "text_retrievals": [a for a in self.actions_log if a.get('action') == 'get_text'],
             "summary": {
                 "total_clicks": len(self.clicked_elements),
                 "total_inputs": len(self.filled_fields),
+                "total_verifications": len([a for a in self.actions_log if a.get('action') == 'verify']),
+                "total_text_retrievals": len([a for a in self.actions_log if a.get('action') == 'get_text']),
                 "total_actions": len(self.actions_log)
             }
         }
@@ -508,68 +583,131 @@ class TrackedHelper:
     Can be used to replace the original helper in user scripts.
     """
     
-    def __init__(self, driver, tracker: SeleniumActionTracker, locators_dict: Dict[str, tuple]):
+    def __init__(self, driver, tracker: SeleniumActionTracker, locators_dict: Dict[str, list]):
         """
         Initialize tracked helper
         
         Args:
             driver: Selenium WebDriver instance
             tracker: SeleniumActionTracker instance to log actions
-            locators_dict: Dictionary mapping locator names to (By.X, "value") tuples
+            locators_dict: Dictionary mapping locator names to list of (By.X, "value") tuples
         """
         self.driver = driver
         self.tracker = tracker
         self.locators = locators_dict
     
+    def _find_element_with_retry(self, locator_key: str):
+        """
+        Try all paths for a locator until one is found
+        """
+        if locator_key not in self.locators:
+            # If it's not a key, maybe it's a raw selector?
+            # For now, let's just log error
+            logger.error(f"Locator '{locator_key}' not found in locators dictionary")
+            return None
+        
+        paths = self.locators[locator_key]
+        for by_type, value in paths:
+            try:
+                element = self.driver.find_element(by_type, value)
+                return element
+            except:
+                continue
+        return None
+
     def click(self, locator_key: str, description: str = ""):
         """
         Click an element and track the action
-        
-        Args:
-            locator_key: Key from locators dictionary
-            description: Optional description of the action
         """
-        if locator_key not in self.locators:
-            logger.error(f"Locator '{locator_key}' not found in locators dictionary")
-            return
-        
-        by_type, value = self.locators[locator_key]
-        element = self.driver.find_element(by_type, value)
-        element.click()
-        
-        self.tracker.track_click(element, locator_key, description)
+        element = self._find_element_with_retry(locator_key)
+        if element:
+            element.click()
+            self.tracker.track_click(element, locator_key, description)
+            return True
+        else:
+            logger.error(f"Could not find element for locator '{locator_key}' using any provided path")
+            return False
     
     def send_keys(self, locator_key: str, text: str, description: str = ""):
         """
         Send keys to an element and track the action
-        
-        Args:
-            locator_key: Key from locators dictionary
-            text: Text to send to the element
-            description: Optional description of the field
         """
-        if locator_key not in self.locators:
-            logger.error(f"Locator '{locator_key}' not found in locators dictionary")
-            return
-        
-        by_type, value = self.locators[locator_key]
-        element = self.driver.find_element(by_type, value)
-        element.send_keys(text)
-        
-        self.tracker.track_field_input(element, locator_key, text, description)
+        element = self._find_element_with_retry(locator_key)
+        if element:
+            element.send_keys(text)
+            self.tracker.track_field_input(element, locator_key, text, description)
+            return True
+        else:
+            logger.error(f"Could not find element for locator '{locator_key}' using any provided path")
+            return False
+
+    def hover(self, locator_key: str, description: str = ""):
+        """
+        Hover over an element and track the action
+        """
+        element = self._find_element_with_retry(locator_key)
+        if element:
+            from selenium.webdriver.common.action_chains import ActionChains
+            ActionChains(self.driver).move_to_element(element).perform()
+            self.tracker.track_hover(element, locator_key, description)
+            return True
+        else:
+            logger.error(f"Could not find element for hover: '{locator_key}'")
+            return False
+
+    def switch_tab(self, tab_index_or_handle=""):
+        """
+        Switch to a different tab/window
+        """
+        try:
+            if isinstance(tab_index_or_handle, int):
+                handles = self.driver.window_handles
+                if tab_index_or_handle < len(handles):
+                    self.driver.switch_to.window(handles[tab_index_or_handle])
+                    self.tracker.track_tab_switch(tab_index_or_handle)
+                    return True
+            elif tab_index_or_handle == "":
+                # Switch to last handle if empty string
+                handles = self.driver.window_handles
+                self.driver.switch_to.window(handles[-1])
+                self.tracker.track_tab_switch("last")
+                return True
+            else:
+                self.driver.switch_to.window(tab_index_or_handle)
+                self.tracker.track_tab_switch(tab_index_or_handle)
+                return True
+        except Exception as e:
+            logger.error(f"Failed to switch tab: {e}")
+            return False
     
+    def is_verify(self, locator_key: str, text: str):
+        """
+        Verify if an element has the expected text
+        """
+        element = self._find_element_with_retry(locator_key)
+        if element:
+            actual_text = element.text
+            success = text.lower() in actual_text.lower()
+            self.tracker.track_verification(element, locator_key, text, actual_text, success)
+            return success
+        return False
+
+    def get_text(self, locator_key: str):
+        """
+        Get text from an element
+        """
+        element = self._find_element_with_retry(locator_key)
+        if element:
+            text = element.text
+            self.tracker.track_get_text(element, locator_key, text)
+            return text
+        return ""
+
     def find_element(self, locator_key: str):
         """
-        Find an element using locator key
-        
-        Args:
-            locator_key: Key from locators dictionary
-            
-        Returns:
-            WebElement instance
+        Find an element using locator key with retry across all paths
         """
-        if locator_key not in self.locators:
-            raise ValueError(f"Locator '{locator_key}' not found in locators dictionary")
-        
-        by_type, value = self.locators[locator_key]
-        return self.driver.find_element(by_type, value)
+        element = self._find_element_with_retry(locator_key)
+        if not element:
+            raise ValueError(f"Locator '{locator_key}' not found in any path")
+        return element
