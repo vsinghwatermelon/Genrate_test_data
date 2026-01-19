@@ -18,11 +18,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 import time
 import logging
 
-from utils.field_extractor import (
-    extract_field_info,
-    is_visible_field,
-    normalize_field_name
-)
+from utils.selenium_utils import create_chrome_driver
+from utils.field_extractor import is_visible_field, extract_field_info, normalize_field_name
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +44,7 @@ class HTMLFieldExtractor:
         if self.driver:
             return
         
-        chrome_options = Options()
-        if self.headless:
-            chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        self.driver = create_chrome_driver(headless=self.headless)
         logger.info("Selenium WebDriver initialized")
     
     def cleanup_driver(self):
@@ -88,20 +76,24 @@ class HTMLFieldExtractor:
     def execute_action(self, action: Dict[str, Any], locators: Dict[str, Any]) -> bool:
         """Execute a single Selenium action with robust finding and execution."""
         if not self.driver:
+            logger.debug("No driver available for action execution")
             return False
-            
+
         action_type = action.get('type')
         locator_key = action.get('locator')
         locator_info = locators.get(locator_key, {})
-        
+
+        logger.debug(f"Executing action: {action_type} on locator_key: {locator_key}")
+        logger.debug(f"Locator info for {locator_key}: {locator_info}")
+
         if not locator_info:
-            logger.debug(f"No locator info found for {locator_key}")
+            logger.warning(f"No locator info found for {locator_key}")
             return False
-            
+
         # 1. FIND ELEMENT (Omni-Search logic handles iframes)
         element = self._find_element(locator_info)
         if not element:
-            logger.debug(f"Element not found for {locator_key} (even in iframes)")
+            logger.warning(f"Element not found for {locator_key} (searched main document and all iframes)")
             return False
             
         try:
@@ -162,37 +154,53 @@ class HTMLFieldExtractor:
             (By.ID, locator_info.get('id', [])),
             (By.NAME, locator_info.get('name', []))
         ]
-        
+
+        logger.debug(f"Searching for element with locator_info: {locator_info}")
+
         # 1. Main document
         self.driver.switch_to.default_content()
         for by, selectors in strategies:
             for selector in selectors:
                 try:
+                    logger.debug(f"Trying {by} selector: '{selector}' in main document")
                     element = WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((by, selector))
                     )
+                    logger.debug(f"Found element with {by} selector: '{selector}'")
                     return element
-                except:
+                except Exception as e:
+                    logger.debug(f"Failed {by} selector '{selector}' in main document: {str(e)}")
                     continue
-        
+
         # 2. Iframes
-        iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
-        for i, iframe in enumerate(iframes):
-            try:
-                self.driver.switch_to.frame(iframe)
-                for by, selectors in strategies:
-                    for selector in selectors:
-                        try:
-                            element = WebDriverWait(self.driver, 2).until(
-                                EC.presence_of_element_located((by, selector))
-                            )
-                            return element
-                        except:
-                            continue
-                self.driver.switch_to.default_content()
-            except:
-                self.driver.switch_to.default_content()
-                continue
+        try:
+            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            logger.debug(f"Found {len(iframes)} iframes to search")
+            for i, iframe in enumerate(iframes):
+                try:
+                    logger.debug(f"Searching in iframe {i}")
+                    self.driver.switch_to.frame(iframe)
+                    for by, selectors in strategies:
+                        for selector in selectors:
+                            try:
+                                logger.debug(f"Trying {by} selector: '{selector}' in iframe {i}")
+                                element = WebDriverWait(self.driver, 2).until(
+                                    EC.presence_of_element_located((by, selector))
+                                )
+                                logger.debug(f"Found element with {by} selector: '{selector}' in iframe {i}")
+                                return element
+                            except Exception as e:
+                                logger.debug(f"Failed {by} selector '{selector}' in iframe {i}: {str(e)}")
+                                continue
+                    self.driver.switch_to.default_content()
+                except Exception as e:
+                    logger.debug(f"Error searching iframe {i}: {str(e)}")
+                    self.driver.switch_to.default_content()
+                    continue
+        except Exception as e:
+            logger.debug(f"Error getting iframes: {str(e)}")
+
+        logger.debug(f"Element not found with any selector in locator_info: {locator_info}")
         return None
 
     def _force_click(self, element, locator_key: str):

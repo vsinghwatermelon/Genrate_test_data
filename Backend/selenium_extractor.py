@@ -12,10 +12,7 @@ import requests
 import uuid
 import time
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from utils.selenium_utils import create_chrome_driver
 
 
 def extract_selenium_values(script_text: str) -> Tuple[List[Dict[str, str]], str]:
@@ -172,16 +169,8 @@ def download_html_from_script(script_text: str, output_dir: str = "downloaded_pa
         return []
 
     # Initialize Headless Chrome
-    print("Initializing Selenium WebDriver for HTML extraction...")
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    
     try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver = create_chrome_driver(headless=True)
         
         for url in urls_to_download:
             try:

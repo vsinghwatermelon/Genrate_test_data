@@ -14,9 +14,7 @@ import re
 import shutil
 from typing import Dict, Any, Optional
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from utils.selenium_utils import create_chrome_driver
 
 from utils.selenium_tracker import SeleniumActionTracker, TrackedHelper
 from utils.locator_parser import LocatorParser
@@ -307,17 +305,8 @@ class SeleniumScriptExecutor:
         Returns:
             Configured Chrome WebDriver instance
         """
-        chrome_options = Options()
-        if headless:
-            chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--window-size=1920,1080')
-        
         try:
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver = create_chrome_driver(headless=headless)
             
             # Wrapper for driver to fix common script issues
             original_implicitly_wait = driver.implicitly_wait

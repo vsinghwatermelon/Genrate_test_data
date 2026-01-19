@@ -237,6 +237,7 @@ function SeleniumFolderUpload() {
 
             <div className="upload-section">
                 <button
+                    type="button"
                     className="upload-btn"
                     onClick={() => fileInputRef.current && fileInputRef.current.click()}
                 >
@@ -303,6 +304,7 @@ function SeleniumFolderUpload() {
 
                     <div style={{ display: 'flex', gap: 12, marginBottom: 32 }}>
                         <button
+                            type="button"
                             className="btn btn-secondary"
                             onClick={() => setSchema([...schema, { name: 'new_field', type: 'string', rules: '', example: '' }])}
                         >
@@ -323,6 +325,7 @@ function SeleniumFolderUpload() {
                     </div>
 
                     <button
+                        type="button"
                         className="btn btn-primary"
                         onClick={handleConfirmGenerate}
                         style={{ marginTop: 24, padding: '14px 28px', fontSize: 18 }}
@@ -338,6 +341,7 @@ function SeleniumFolderUpload() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                         <h3>Generated Preview</h3>
                         <button
+                            type="button"
                             className="btn btn-secondary"
                             onClick={() => {
                                 const csvContent = "data:text/csv;charset=utf-8,"
