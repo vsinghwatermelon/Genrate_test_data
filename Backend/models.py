@@ -65,8 +65,8 @@ class SchemaField(BaseModel):
     """Definition of a single schema field."""
     name: str = Field(..., min_length=1, description="Field name")
     type: str = Field(default="string", description="Field data type")
-    rules: Optional[str] = Field(default=None, description="Validation rules")
-    example: Optional[str] = Field(default=None, description="Example value")
+    rules: Optional[Any] = Field(default=None, description="Validation rules")
+    example: Optional[Any] = Field(default=None, description="Example value")
     description: Optional[str] = Field(default=None, description="Field description")
     min_length: Optional[int] = Field(default=None, ge=0, description="Minimum length")
     max_length: Optional[int] = Field(default=None, ge=0, description="Maximum length")
@@ -77,6 +77,14 @@ class SchemaField(BaseModel):
     nullable: bool = Field(default=False, description="Whether field can be null")
     unique: bool = Field(default=False, description="Whether values must be unique")
     references: Optional[Dict[str, str]] = Field(default=None, description="FK reference")
+
+    @field_validator('rules', 'example', mode='before')
+    @classmethod
+    def ensure_string(cls, v: Any) -> Optional[str]:
+        """Convert non-string values (like booleans) to strings for prompt compatibility."""
+        if v is None:
+            return None
+        return str(v)
 
     @field_validator('name')
     @classmethod

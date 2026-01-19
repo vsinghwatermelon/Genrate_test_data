@@ -3,15 +3,6 @@ import './GroupEditor.css';
 
 /**
  * GroupEditor Component
- * 
- * Allows users to create and manage test data groups with field-level
- * correct/wrong configuration.
- * 
- * Props:
- * - group: Group object {name, count, correct_fields, wrong_fields}
- * - fields: Array of schema field objects [{name, type, ...}]
- * - onChange: Callback (key, value) when group properties change
- * - onRemove: Callback when remove button is clicked (null to hide button)
  */
 function GroupEditor({ group, fields, onChange, onRemove }) {
     const handleFieldToggle = (fieldName, correctOrWrong) => {
@@ -19,22 +10,16 @@ function GroupEditor({ group, fields, onChange, onRemove }) {
         const wrongFields = group.wrong_fields || [];
 
         if (correctOrWrong === 'correct') {
-            // Toggle correct field
             if (correctFields.includes(fieldName)) {
-                // Remove from correct
                 onChange('correct_fields', correctFields.filter(f => f !== fieldName));
             } else {
-                // Add to correct, remove from wrong if present
                 onChange('correct_fields', [...correctFields, fieldName]);
                 onChange('wrong_fields', wrongFields.filter(f => f !== fieldName));
             }
         } else {
-            // Toggle wrong field
             if (wrongFields.includes(fieldName)) {
-                // Remove from wrong
                 onChange('wrong_fields', wrongFields.filter(f => f !== fieldName));
             } else {
-                // Add to wrong, remove from correct if present
                 onChange('wrong_fields', [...wrongFields, fieldName]);
                 onChange('correct_fields', correctFields.filter(f => f !== fieldName));
             }
@@ -44,7 +29,6 @@ function GroupEditor({ group, fields, onChange, onRemove }) {
     const isCorrect = (fieldName) => (group.correct_fields || []).includes(fieldName);
     const isWrong = (fieldName) => (group.wrong_fields || []).includes(fieldName);
 
-    // Add or update wrong_field_rules for a field
     const handleWrongRuleChange = (fieldName, value) => {
         const rules = { ...(group.wrong_field_rules || {}) };
         if (value) {
@@ -73,14 +57,14 @@ function GroupEditor({ group, fields, onChange, onRemove }) {
     };
 
     return (
-        <div className="group-editor">
-            <div className="group-header">
+        <div className="ge-container">
+            <div className="ge-header">
                 <input
                     type="text"
                     placeholder="Group Name (e.g., G1)"
                     value={group.name || ''}
                     onChange={(e) => onChange('name', e.target.value)}
-                    className="group-name-input"
+                    className="ge-name-input"
                 />
                 <input
                     type="number"
@@ -89,72 +73,90 @@ function GroupEditor({ group, fields, onChange, onRemove }) {
                     placeholder="Count"
                     value={group.count || ''}
                     onChange={(e) => onChange('count', parseInt(e.target.value) || 0)}
-                    className="group-count-input"
+                    className="ge-count-input"
                 />
                 {onRemove && (
-                    <button type="button" onClick={onRemove} className="remove-group-btn">
+                    <button type="button" onClick={onRemove} className="ge-remove-btn">
                         ✕
                     </button>
                 )}
             </div>
 
-            <div className="quick-actions">
-                <button type="button" onClick={markAllCorrect} className="quick-btn correct-btn">
+            <div className="ge-quick-actions">
+                <button type="button" onClick={markAllCorrect} className="ge-quick-btn ge-correct-btn">
                     ✓ All Correct
                 </button>
-                <button type="button" onClick={markAllWrong} className="quick-btn wrong-btn">
+                <button type="button" onClick={markAllWrong} className="ge-quick-btn ge-wrong-btn">
                     ✗ All Wrong
                 </button>
-                <button type="button" onClick={clearAll} className="quick-btn clear-btn">
+                <button type="button" onClick={clearAll} className="ge-quick-btn ge-clear-btn">
                     Clear All
                 </button>
             </div>
 
-            <div className="field-selection">
-                <div className="field-selection-header">
-                    <span>Field</span>
-                    <span>✓ Correct</span>
-                    <span>✗ Wrong</span>
-                    <span style={{marginLeft: 8}}>If Wrong, What Should Be Wrong?</span>
+            <div className="ge-field-selection">
+                <div className="ge-field-selection-header">
+                    <span className="ge-h-field">Data Field</span>
+                    <span className="ge-h-status">Condition</span>
+                    <span className="ge-h-details">Validation / Error Rule</span>
                 </div>
-                {fields.map((field, idx) => (
-                    <div key={idx} className="field-row">
-                        <span className="field-name">{field.name || `Field ${idx + 1}`}</span>
-                        <label className="checkbox-label">
-                            <input
-                                type="checkbox"
-                                checked={isCorrect(field.name)}
-                                onChange={() => handleFieldToggle(field.name, 'correct')}
-                            />
-                        </label>
-                        <label className="checkbox-label">
-                            <input
-                                type="checkbox"
-                                checked={isWrong(field.name)}
-                                onChange={() => handleFieldToggle(field.name, 'wrong')}
-                            />
-                        </label>
-                        {isWrong(field.name) && (
-                            <input
-                                type="text"
-                                placeholder="e.g. invalid email, empty, too short"
-                                style={{marginLeft: 8, width: 180}}
-                                value={group.wrong_field_rules?.[field.name] || ''}
-                                onChange={e => handleWrongRuleChange(field.name, e.target.value)}
-                            />
-                        )}
-                    </div>
-                ))}
+                {fields.map((field, idx) => {
+                    const status = isCorrect(field.name) ? 'correct' : isWrong(field.name) ? 'wrong' : 'default';
+                    return (
+                        <div key={idx} className={`ge-field-row ge-status-${status}`}>
+                            <div className="ge-field-info">
+                                <span className="ge-field-icon">󱔗</span>
+                                <span className="ge-field-name">{field.name}</span>
+                            </div>
+
+                            <div className="ge-status-picker">
+                                <button
+                                    className={`ge-status-btn ge-btn-correct ${status === 'correct' ? 'ge-active' : ''}`}
+                                    onClick={() => handleFieldToggle(field.name, 'correct')}
+                                    title="Mark as Correct"
+                                >
+                                    ✓
+                                </button>
+                                <button
+                                    className={`ge-status-btn ge-btn-wrong ${status === 'wrong' ? 'ge-active' : ''}`}
+                                    onClick={() => handleFieldToggle(field.name, 'wrong')}
+                                    title="Mark as Wrong"
+                                >
+                                    ✗
+                                </button>
+                            </div>
+
+                            <div className="ge-field-details">
+                                {status === 'wrong' ? (
+                                    <div className="ge-rule-container">
+                                        <span className="ge-rule-prefix">Rule:</span>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. out of range, invalid..."
+                                            className="ge-wrong-rule-input"
+                                            value={group.wrong_field_rules?.[field.name] || ''}
+                                            onChange={e => handleWrongRuleChange(field.name, e.target.value)}
+                                        />
+                                    </div>
+                                ) : (
+                                    <span className="ge-valid-label">
+                                        {status === 'correct' ? '✦ Explicitly valid' : '✧ System default'}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
 
-            <div className="group-summary">
+            <div className="ge-summary">
                 <small>
-                    {group.count || 0} records: 
-                    {(group.correct_fields?.length || 0) > 0 && 
+                    {group.count || 0} records:
+                    {(group.correct_fields?.length || 0) > 0 &&
                         ` ${group.correct_fields.length} correct field(s)`}
-                    {(group.wrong_fields?.length || 0) > 0 && 
+                    {(group.wrong_fields?.length || 0) > 0 &&
                         `, ${group.wrong_fields.length} wrong field(s)`}
-                    {(!group.correct_fields?.length && !group.wrong_fields?.length) && 
+                    {(!group.correct_fields?.length && !group.wrong_fields?.length) &&
                         ' all fields valid'}
                 </small>
             </div>

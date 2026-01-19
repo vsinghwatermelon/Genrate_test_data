@@ -1,161 +1,331 @@
-.group-editor {
-    border: 2px solid #3498db;
-    border-radius: 8px;
-    padding: 15px;
-    margin-bottom: 15px;
-    background: #f8f9fa;
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+
+.ge-container {
+    border: 1px solid rgba(226, 232, 240, 0.8);
+    border-radius: 20px;
+    padding: 24px;
+    margin-bottom: 30px;
+    background: linear-gradient(135deg, #ffffff 0%, #fcfdfe 100%);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    position: relative;
+    overflow: hidden;
 }
 
-.group-header {
+.ge-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 6px;
+    height: 100%;
+    background: #3498db;
+    opacity: 0.8;
+}
+
+.ge-container:hover {
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+    border-color: #3498db;
+}
+
+.ge-header {
     display: flex;
-    gap: 10px;
-    margin-bottom: 15px;
+    gap: 16px;
+    margin-bottom: 24px;
     align-items: center;
 }
 
-.group-name-input {
+.ge-name-input {
     flex: 1;
-    padding: 8px 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.group-count-input {
-    width: 80px;
-    padding: 8px 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 14px;
-}
-
-.remove-group-btn {
-    padding: 6px 12px;
-    background: #e74c3c;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
+    padding: 12px 20px;
+    border: 2px solid #f1f5f9;
+    border-radius: 12px;
     font-size: 16px;
-    font-weight: bold;
-}
-
-.remove-group-btn:hover {
-    background: #c0392b;
-}
-
-.quick-actions {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-    padding: 8px;
-    background: #ecf0f1;
-    border-radius: 4px;
-}
-
-.quick-btn {
-    flex: 1;
-    padding: 8px 12px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
+    color: #1e293b;
+    background: #fff;
     transition: all 0.2s;
 }
 
-.correct-btn {
-    background: #27ae60;
-    color: white;
+.ge-name-input:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 4px rgba(52, 152, 219, 0.1);
 }
 
-.correct-btn:hover {
-    background: #229954;
-}
-
-.wrong-btn {
-    background: #e67e22;
-    color: white;
-}
-
-.wrong-btn:hover {
-    background: #d35400;
-}
-
-.clear-btn {
-    background: #95a5a6;
-    color: white;
-}
-
-.clear-btn:hover {
-    background: #7f8c8d;
-}
-
-.field-selection {
-    background: white;
-    border-radius: 6px;
-    padding: 10px;
-    margin-bottom: 10px;
-}
-
-.field-selection-header {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
-    gap: 10px;
-    padding: 8px;
-    background: #34495e;
-    color: white;
-    border-radius: 4px;
-    margin-bottom: 8px;
+.ge-count-input {
+    width: 100px;
+    padding: 12px 16px;
+    border: 2px solid #f1f5f9;
+    border-radius: 12px;
+    font-size: 16px;
     font-weight: 600;
-    font-size: 13px;
+    text-align: center;
+    transition: all 0.2s;
 }
 
-.field-row {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
-    gap: 10px;
-    padding: 8px;
-    border-bottom: 1px solid #ecf0f1;
-    align-items: center;
-}
-
-.field-row:last-child {
-    border-bottom: none;
-}
-
-.field-row:hover {
-    background: #f8f9fa;
-}
-
-.field-name {
-    font-weight: 500;
-    color: #2c3e50;
-    font-size: 14px;
-}
-
-.checkbox-label {
+.ge-remove-btn {
+    width: 44px;
+    height: 44px;
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: center;
+    background: #fff5f5;
+    color: #ff4d4d;
+    border: 2px solid #ffebeb;
+    border-radius: 12px;
     cursor: pointer;
+    font-size: 20px;
+    transition: all 0.2s;
 }
 
-.checkbox-label input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
+.ge-remove-btn:hover {
+    background: #ff4d4d;
+    color: white;
+    transform: rotate(90deg) scale(1.1);
+    box-shadow: 0 4px 12px rgba(255, 77, 77, 0.3);
 }
 
-.group-summary {
+.ge-quick-actions {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
     padding: 8px;
-    background: #e8f4f8;
-    border-radius: 4px;
+    background: rgba(241, 245, 249, 0.5);
+    border-radius: 16px;
+    backdrop-filter: blur(4px);
+}
+
+.ge-quick-btn {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.ge-correct-btn {
+    background: #10b981;
+    color: white;
+    box-shadow: 0 4px 0 #059669;
+}
+
+.ge-correct-btn:hover {
+    background: #059669;
+    transform: translateY(-2px);
+}
+
+.ge-wrong-btn {
+    background: #f59e0b;
+    color: white;
+    box-shadow: 0 4px 0 #d97706;
+}
+
+.ge-wrong-btn:hover {
+    background: #d97706;
+    transform: translateY(-2px);
+}
+
+.ge-clear-btn {
+    background: #64748b;
+    color: white;
+    box-shadow: 0 4px 0 #475569;
+}
+
+.ge-clear-btn:hover {
+    background: #475569;
+    transform: translateY(-2px);
+}
+
+.ge-field-selection {
+    background: #ffffff;
+    border: 1px solid #f1f5f9;
+    border-radius: 16px;
+    overflow: hidden;
+    margin-bottom: 24px;
+}
+
+.ge-field-selection-header {
+    display: grid;
+    grid-template-columns: 2fr 140px 1.5fr;
+    gap: 16px;
+    padding: 16px 24px;
+    background: #1e293b;
+    color: #94a3b8;
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+
+.ge-h-status,
+.ge-h-details {
     text-align: center;
 }
 
-.group-summary small {
-    color: #34495e;
+.ge-field-row {
+    display: grid;
+    grid-template-columns: 2fr 140px 1.5fr;
+    gap: 16px;
+    padding: 18px 24px;
+    border-bottom: 1px solid #f8fafc;
+    align-items: center;
+    transition: all 0.3s;
+}
+
+.ge-field-row:last-child {
+    border-bottom: none;
+}
+
+.ge-field-row:hover {
+    background: #fdfdfd;
+}
+
+.ge-status-correct {
+    background: rgba(16, 185, 129, 0.02);
+}
+
+.ge-status-wrong {
+    background: rgba(245, 158, 11, 0.03);
+}
+
+.ge-field-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.ge-field-icon {
+    font-size: 18px;
+    opacity: 0.5;
+}
+
+.ge-field-name {
+    font-weight: 600;
+    color: #334155;
+    font-size: 15px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.ge-status-picker {
+    display: flex;
+    background: #f1f5f9;
+    padding: 4px;
+    border-radius: 10px;
+    gap: 4px;
+}
+
+.ge-status-btn {
+    flex: 1;
+    border: none;
+    padding: 6px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 14px;
+    background: transparent;
+    color: #94a3b8;
+    transition: all 0.2s;
+}
+
+.ge-status-btn.ge-active.ge-btn-correct {
+    background: white;
+    color: #10b981;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2);
+}
+
+.ge-status-btn.ge-active.ge-btn-wrong {
+    background: white;
+    color: #f59e0b;
+    box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
+}
+
+.ge-field-details {
+    display: flex;
+    align-items: center;
+}
+
+.ge-rule-container {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
+    background: #fff;
+    border: 1.5px solid #fed7aa;
+    border-radius: 8px;
+    padding: 0 10px;
+}
+
+.ge-rule-prefix {
+    font-size: 11px;
+    font-weight: 800;
+    color: #f59e0b;
+    text-transform: uppercase;
+}
+
+.ge-wrong-rule-input {
+    flex: 1;
+    padding: 8px 0;
+    border: none;
     font-size: 13px;
+    background: transparent;
+    color: #c2410c;
+}
+
+.ge-wrong-rule-input:focus {
+    outline: none;
+}
+
+.ge-valid-label {
+    font-size: 12px;
+    color: #cbd5e1;
+    font-weight: 500;
+    width: 100%;
+    text-align: center;
+}
+
+.ge-status-correct .ge-valid-label {
+    color: #10b981;
+    font-weight: 600;
+}
+
+.ge-summary {
+    padding: 16px;
+    background: #f8fafc;
+    border-radius: 14px;
+    text-align: center;
+    border: 1px solid #e2e8f0;
+}
+
+.ge-summary small {
+    color: #475569;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+@media (max-width: 768px) {
+
+    .ge-field-selection-header,
+    .ge-field-row {
+        grid-template-columns: 1fr 100px;
+        gap: 8px;
+        padding: 12px;
+    }
+
+    .ge-h-details {
+        display: none;
+    }
+
+    .ge-field-details {
+        display: none;
+    }
 }

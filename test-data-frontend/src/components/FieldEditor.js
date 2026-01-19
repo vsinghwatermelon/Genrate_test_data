@@ -93,7 +93,7 @@ export default function FieldEditor({
                 onChange={(e) => onChange('example', e.target.value)}
             />
 
-            {!hideExample && (
+            {!hideExample && preview && (
                 <div className="fe-preview">
                     <code>{preview}</code>
                 </div>

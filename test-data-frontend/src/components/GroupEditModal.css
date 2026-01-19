@@ -1,379 +1,362 @@
-.modal-overlay {
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+
+.gem-overlay {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(15, 23, 42, 0.7);
+    backdrop-filter: blur(8px);
     display: flex;
     justify-content: center;
     align-items: center;
     z-index: 1000;
     padding: 20px;
+    font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
-.modal-content {
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-    max-width: 700px;
+.gem-content {
+    background: #ffffff;
+    border-radius: 24px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    max-width: 800px;
     width: 100%;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
-}
-
-.group-edit-modal {
-    max-width: 800px;
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px;
-    border-bottom: 2px solid #ecf0f1;
-}
-
-.modal-header h2 {
-    margin: 0;
-    color: #2c3e50;
-    font-size: 24px;
-}
-
-.modal-close {
-    background: none;
-    border: none;
-    font-size: 32px;
-    cursor: pointer;
-    color: #7f8c8d;
-    line-height: 1;
-    padding: 0;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.modal-close:hover {
-    color: #e74c3c;
-}
-
-.modal-body {
-    padding: 20px;
-    overflow-y: auto;
-    flex: 1;
-}
-
-/* Info Banner */
-.edit-info-banner {
-    background: #e3f2fd;
-    border-left: 4px solid #2196f3;
-    padding: 12px 16px;
-    margin-bottom: 20px;
-    border-radius: 4px;
-    font-size: 14px;
-    color: #1565c0;
-    line-height: 1.5;
-}
-
-.edit-info-banner strong {
-    color: #0d47a1;
-    font-weight: 700;
-}
-
-.modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    padding: 20px;
-    border-top: 2px solid #ecf0f1;
-}
-
-/* Edit Mode Selector */
-.edit-mode-selector {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-    background: #ecf0f1;
-    padding: 5px;
-    border-radius: 8px;
-}
-
-.mode-btn {
-    flex: 1;
-    padding: 12px 20px;
-    border: none;
-    background: transparent;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 15px;
-    font-weight: 600;
-    color: #7f8c8d;
-    transition: all 0.2s;
-}
-
-.mode-btn.active {
-    background: #3498db;
-    color: white;
-    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
-}
-
-.mode-btn:hover:not(.active) {
-    background: #d5dbdb;
-}
-
-/* Form Group */
-.form-group {
-    margin-bottom: 20px;
-}
-
-.form-group label {
-    display: block;
-    font-weight: 600;
-    color: #2c3e50;
-    margin-bottom: 8px;
-}
-
-.record-count-input {
-    width: 100%;
-    padding: 10px;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    font-size: 14px;
-    margin-top: 5px;
-}
-
-.record-count-input:focus {
-    outline: none;
-    border-color: #3498db;
-}
-
-/* Manual Edit Section */
-.manual-edit-section h3,
-.prompt-edit-section h3 {
-    margin-bottom: 15px;
-    color: #2c3e50;
-    font-size: 18px;
-}
-
-.mode-description {
-    color: #7f8c8d;
-    font-size: 14px;
-    margin-bottom: 15px;
-    line-height: 1.5;
-}
-
-.quick-actions {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 15px;
-    padding: 10px;
-    background: #ecf0f1;
-    border-radius: 6px;
-}
-
-.quick-btn {
-    flex: 1;
-    padding: 8px 12px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    transition: all 0.2s;
-}
-
-.correct-btn {
-    background: #27ae60;
-    color: white;
-}
-
-.correct-btn:hover {
-    background: #229954;
-}
-
-.wrong-btn {
-    background: #e67e22;
-    color: white;
-}
-
-.wrong-btn:hover {
-    background: #d35400;
-}
-
-.clear-btn {
-    background: #95a5a6;
-    color: white;
-}
-
-.clear-btn:hover {
-    background: #7f8c8d;
-}
-
-/* Field Selection */
-.field-selection {
-    border: 2px solid #ddd;
-    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
     overflow: hidden;
 }
 
-.field-selection-header {
-    display: grid;
-    grid-template-columns: 1fr 100px 100px;
-    gap: 10px;
-    padding: 12px;
-    background: #34495e;
-    color: white;
+.gem-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 24px 32px;
+    background: #ffffff;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.gem-header h2 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+.gem-close {
+    background: #f8fafc;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #64748b;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.gem-close:hover {
+    background: #fee2e2;
+    color: #ef4444;
+    transform: rotate(90deg);
+}
+
+.gem-body {
+    padding: 32px;
+    overflow-y: auto;
+    flex: 1;
+    background: #fdfdfe;
+}
+
+.gem-info-banner {
+    background: #eff6ff;
+    border: 1px solid #dbeafe;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    border-radius: 16px;
+    font-size: 14px;
+    color: #1e40af;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.gem-mode-selector {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    background: #f1f5f9;
+    padding: 6px;
+    border-radius: 14px;
+}
+
+.gem-mode-btn {
+    flex: 1;
+    padding: 10px 16px;
+    border: none;
+    background: transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 14px;
     font-weight: 600;
-    font-size: 13px;
+    color: #64748b;
+    transition: all 0.2s;
+}
+
+.gem-mode-btn.gem-active {
+    background: #ffffff;
+    color: #3b82f6;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.gem-form-group {
+    margin-bottom: 24px;
+}
+
+.gem-form-group label {
+    display: block;
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 8px;
+}
+
+.gem-record-count-input {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #f1f5f9;
+    border-radius: 12px;
+    font-size: 14px;
+}
+
+.gem-quick-actions {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.gem-quick-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    transition: all 0.2s;
+}
+
+.gem-correct-btn {
+    background: #10b981;
+    color: white;
+}
+
+.gem-wrong-btn {
+    background: #f59e0b;
+    color: white;
+}
+
+.gem-clear-btn {
+    background: #64748b;
+    color: white;
+}
+
+.gem-field-selection {
+    background: #ffffff;
+    border: 1px solid #f1f5f9;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.gem-field-selection-header {
+    display: grid;
+    grid-template-columns: 180px 120px 1fr;
+    gap: 16px;
+    padding: 16px 24px;
+    background: #1e293b;
+    color: #94a3b8;
+    font-weight: 700;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+
+.gem-h-status,
+.gem-h-details {
     text-align: center;
 }
 
-.field-selection-header span:first-child {
-    text-align: left;
-}
-
-.field-row {
+.gem-field-row {
     display: grid;
-    grid-template-columns: 1fr 100px 100px;
-    gap: 10px;
-    padding: 12px;
+    grid-template-columns: 180px 120px 1fr;
+    gap: 16px;
+    padding: 14px 24px;
     background: white;
-    border-bottom: 1px solid #ecf0f1;
+    border-bottom: 1px solid #f8fafc;
     align-items: center;
+    transition: all 0.2s;
 }
 
-.field-row:last-child {
-    border-bottom: none;
+.gem-status-correct {
+    background: rgba(16, 185, 129, 0.02);
 }
 
-.field-row:hover {
-    background: #f8f9fa;
+.gem-status-wrong {
+    background: rgba(245, 158, 11, 0.03);
 }
 
-.field-name {
-    font-weight: 500;
-    color: #2c3e50;
-}
-
-.checkbox-label {
+.gem-field-info {
     display: flex;
-    justify-content: center;
     align-items: center;
+    gap: 10px;
 }
 
-.checkbox-label input[type="checkbox"] {
-    width: 20px;
-    height: 20px;
-    cursor: pointer;
+.gem-field-icon {
+    font-size: 18px;
+    opacity: 0.5;
 }
 
-/* Prompt Edit Section */
-.prompt-edit-section {
-    padding-top: 10px;
-}
-
-.prompt-help {
-    color: #7f8c8d;
-    font-size: 14px;
-    margin-bottom: 15px;
-    line-height: 1.5;
-}
-
-.prompt-textarea {
-    width: 100%;
-    padding: 12px;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    font-size: 14px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    resize: vertical;
-    margin-bottom: 15px;
-}
-
-.prompt-textarea:focus {
-    outline: none;
-    border-color: #3498db;
-}
-
-.prompt-examples {
-    background: #e8f5e9;
-    padding: 15px;
-    border-radius: 6px;
-    border-left: 4px solid #27ae60;
-}
-
-.prompt-examples strong {
-    display: block;
-    margin-bottom: 8px;
-    color: #2c3e50;
-}
-
-.prompt-examples ul {
-    margin: 0;
-    padding-left: 20px;
-}
-
-.prompt-examples li {
-    margin-bottom: 5px;
-    color: #555;
-    font-size: 13px;
-}
-
-/* Modal Footer Buttons */
-.cancel-btn,
-.save-btn {
-    padding: 12px 24px;
-    border: none;
-    border-radius: 6px;
-    font-size: 15px;
+.gem-field-name {
     font-weight: 600;
+    color: #334155;
+    font-size: 14px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.gem-status-picker {
+    display: flex;
+    background: #f1f5f9;
+    padding: 3px;
+    border-radius: 8px;
+    gap: 3px;
+}
+
+.gem-status-btn {
+    flex: 1;
+    border: none;
+    padding: 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    background: transparent;
+    color: #94a3b8;
+}
+
+.gem-status-btn.gem-active.gem-btn-correct {
+    background: white;
+    color: #10b981;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.gem-status-btn.gem-active.gem-btn-wrong {
+    background: white;
+    color: #f59e0b;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.gem-rule-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: white;
+    border: 1.5px solid #fed7aa;
+    border-radius: 8px;
+    padding: 4px 10px;
+}
+
+.gem-rule-prefix {
+    font-size: 9px;
+    font-weight: 800;
+    color: #f59e0b;
+    text-transform: uppercase;
+}
+
+.gem-wrong-rule-input {
+    flex: 1;
+    border: none;
+    font-size: 12px;
+    background: transparent;
+    color: #c2410c;
+}
+
+.gem-wrong-rule-input:focus {
+    outline: none;
+}
+
+.gem-valid-label {
+    font-size: 11px;
+    color: #cbd5e1;
+    font-weight: 500;
+    width: 100%;
+    text-align: center;
+}
+
+.gem-status-correct .gem-valid-label {
+    color: #10b981;
+    font-weight: 600;
+}
+
+.gem-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 24px 32px;
+    background: #f8fafc;
+    border-top: 1px solid #f1f5f9;
+}
+
+.gem-cancel-btn,
+.gem-save-btn {
+    padding: 12px 24px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.2s;
 }
 
-.cancel-btn {
-    background: #ecf0f1;
-    color: #7f8c8d;
+.gem-cancel-btn {
+    background: #ffffff;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
 }
 
-.cancel-btn:hover:not(:disabled) {
-    background: #d5dbdb;
+.gem-save-btn {
+    background: #3b82f6;
+    color: #ffffff;
+    border: none;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);
 }
 
-.save-btn {
-    background: #3498db;
-    color: white;
+.gem-save-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
 }
 
-.save-btn:hover:not(:disabled) {
-    background: #2980b9;
-    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+.gem-prompt-textarea {
+    width: 100%;
+    padding: 16px;
+    border: 2px solid #f1f5f9;
+    border-radius: 16px;
+    font-size: 14px;
+    resize: vertical;
 }
 
-.save-btn:disabled,
-.cancel-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-/* Responsive */
 @media (max-width: 768px) {
-    .modal-content {
-        max-width: 95%;
-        margin: 10px;
+
+    .gem-field-selection-header,
+    .gem-field-row {
+        grid-template-columns: 1fr 100px;
+        padding: 12px;
     }
 
-    .field-selection-header,
-    .field-row {
-        grid-template-columns: 1fr 80px 80px;
-        font-size: 12px;
-    }
-
-    .mode-btn {
-        font-size: 13px;
-        padding: 10px;
+    .gem-field-details {
+        display: none;
     }
 }

@@ -8,7 +8,7 @@ import JSZip from 'jszip';
 import FieldEditor from './FieldEditor';
 import './SeleniumFolderUpload.css';
 
-function SeleniumFolderUpload() {
+function SeleniumFolderUpload({ onExtract }) {
     const [error, setError] = useState('');
     // const [folderName, setFolderName] = useState(''); // removed unused variable
     const [fields, setFields] = useState([]);
@@ -149,6 +149,7 @@ function SeleniumFolderUpload() {
             if (Array.isArray(data.parsed_schema)) {
                 setSchema(data.parsed_schema);
                 setShowSchemaEditor(true);
+                if (onExtract) onExtract(data.parsed_schema);
             } else {
                 setSchema([]);
                 setShowSchemaEditor(false);
@@ -281,104 +282,25 @@ function SeleniumFolderUpload() {
             )}
 
             {showSchemaEditor && (
-                <div className="schema-editor-wrapper">
-                    <h3>Schema Customization & Grouping</h3>
-                    <div style={{ marginBottom: 24 }}>
-                        {schema.map((field, index) => (
-                            <FieldEditor
-                                key={index}
-                                field={field}
-                                onChange={(k, v) => {
-                                    const updated = [...schema];
-                                    updated[index][k] = v;
-                                    setSchema(updated);
-                                }}
-                                onRemove={schema.length > 1 ? () => {
-                                    setSchema(schema.filter((_, i) => i !== index));
-                                } : null}
-                                openTypeModal={() => openTypeModal(index)}
-                                hideExample={true}
-                            />
-                        ))}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 12, marginBottom: 32 }}>
-                        <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => setSchema([...schema, { name: 'new_field', type: 'string', rules: '', example: '' }])}
-                        >
-                            + Add Field
-                        </button>
-                    </div>
-
-                    <div style={{ background: '#f9fafb', padding: 24, borderRadius: 12, border: '1px solid #e5e7eb' }}>
-                        <GroupEditor
-                            group={groups[0]}
-                            fields={schema}
-                            onChange={(key, value) => {
-                                const newGroups = [...groups];
-                                newGroups[0] = { ...newGroups[0], [key]: value };
-                                setGroups(newGroups);
-                            }}
-                        />
-                    </div>
-
-                    <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={handleConfirmGenerate}
-                        style={{ marginTop: 24, padding: '14px 28px', fontSize: 18 }}
-                        disabled={loading}
-                    >
-                        {loading ? 'Generating...' : '🚀 Generate Test Data Now'}
-                    </button>
+                <div className="extraction-complete-banner" style={{
+                    marginTop: 24,
+                    padding: 24,
+                    background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                    border: '2px solid #10b981',
+                    borderRadius: 20,
+                    textAlign: 'center',
+                    boxShadow: '0 10px 25px -5px rgba(16, 185, 129, 0.1)'
+                }}>
+                    <div style={{ fontSize: '40px', marginBottom: '12px' }}>✅</div>
+                    <h3 style={{ color: '#065f46', margin: '0 0 8px 0', fontSize: '20px', fontWeight: 700 }}>Extraction Successful</h3>
+                    <p style={{ color: '#047857', margin: 0, fontSize: '15px' }}>
+                        We found <strong>{schema.length}</strong> fields in your automation script.
+                    </p>
+                    <p style={{ color: '#059669', marginTop: '4px', fontSize: '14px', fontWeight: 500 }}>
+                        Please scroll down to configure your generation groups.
+                    </p>
                 </div>
             )}
-
-            {generatedData && (
-                <div style={{ marginTop: 40 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                        <h3>Generated Preview</h3>
-                        <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => {
-                                const csvContent = "data:text/csv;charset=utf-8,"
-                                    + Object.keys(generatedData[0]).join(",") + "\n"
-                                    + generatedData.map(row => Object.values(row).join(",")).join("\n");
-                                const encodedUri = encodeURI(csvContent);
-                                const link = document.createElement("a");
-                                link.setAttribute("href", encodedUri);
-                                link.setAttribute("download", "folder_test_data.csv");
-                                document.body.appendChild(link);
-                                link.click();
-                            }}
-                        >
-                            📥 Download CSV
-                        </button>
-                    </div>
-                    <pre style={{
-                        maxHeight: 400,
-                        overflow: 'auto',
-                        background: '#1e293b',
-                        color: '#f8fafc',
-                        padding: 20,
-                        borderRadius: 12,
-                        fontSize: 13,
-                        border: '1px solid #334155'
-                    }}>
-                        {JSON.stringify(generatedData, null, 2)}
-                    </pre>
-                </div>
-            )}
-
-            <TypeModal
-                show={showTypeModal}
-                onClose={() => setShowTypeModal(false)}
-                types={allDataTypes}
-                onSelect={handleTypeSelect}
-            />
         </div>
     );
 }

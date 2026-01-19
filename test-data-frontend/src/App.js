@@ -203,6 +203,14 @@ function App() {
         }
     };
 
+    const sanitizeFields = (fields) => {
+        return fields.map(f => ({
+            ...f,
+            rules: f.rules === null || f.rules === undefined ? "" : String(f.rules),
+            example: f.example === null || f.example === undefined ? "" : String(f.example)
+        }));
+    };
+
     const handleGroupEditSave = async (editMode, updatedGroup, prompt) => {
         setRegeneratingGroup(true);
         setError('');
@@ -220,7 +228,7 @@ function App() {
 
             // Build the payload to regenerate ONLY this specific group
             const payload = {
-                schema_fields: validFields,  // Backend expects 'schema_fields' with valid field names
+                schema_fields: sanitizeFields(validFields),  // Backend expects 'schema_fields' with valid field names
                 groups: [{
                     name: updatedGroup.name,
                     count: updatedGroup.count,
@@ -522,7 +530,7 @@ function App() {
                 const validFields = fields.filter(f => f.name);
 
                 body = {
-                    schema_fields: validFields,
+                    schema_fields: sanitizeFields(validFields),
                     model_provider: modelProvider
                 };
 
@@ -561,6 +569,20 @@ function App() {
                 if (finalAdditionalRules) {
                     body.additional_rules = finalAdditionalRules;
                 }
+            } else if (mode === 'selenium-folder') {
+                // If we've extracted fields from a folder, we use the parsedFields and parsedGroups
+                endpoint = 'http://localhost:8000/generate';
+                const validFields = parsedFields?.filter(f => f.name) || [];
+
+                if (validFields.length === 0) {
+                    throw new Error('No fields extracted yet. Please upload a folder first.');
+                }
+
+                body = {
+                    schema_fields: sanitizeFields(validFields),
+                    groups: parsedGroups,
+                    model_provider: modelProvider
+                };
             } else if (mode === 'selenium') {
                 endpoint = 'http://localhost:8000/generate-from-selenium';
                 body = {
@@ -576,7 +598,7 @@ function App() {
                 endpoint = 'http://localhost:8000/generate';
                 const validFields = parsedFields.filter(f => f.name && f.name.trim() !== '');
                 body = {
-                    schema_fields: validFields,
+                    schema_fields: sanitizeFields(validFields),
                     model_provider: modelProvider
                 };
 
@@ -946,7 +968,61 @@ function App() {
                             </div>
                         )}
                     </>) : mode === 'selenium-folder' ? (
-                        <SeleniumFolderUpload onExtract={setParsedFields} />
+                        <>
+                            <SeleniumFolderUpload onExtract={(f) => {
+                                setParsedFields(f);
+                                setParsedUseGroups(true);
+                            }} />
+
+                            {parsedFields && (
+                                <div className="form-section parsed-schema-section" style={{ marginTop: '30px' }}>
+                                    <h3>📊 Extraction Configuration</h3>
+                                    <p className="help-text">Review the extracted schema and configure data generation groups.</p>
+
+                                    <div className="form-section">
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                            <h4>Schema Fields</h4>
+                                            <button type="button" onClick={addParsedField} className="add-btn">+ Add Field</button>
+                                        </div>
+                                        {parsedFields.map((field, index) => (
+                                            <FieldEditor
+                                                key={index}
+                                                field={field}
+                                                onChange={(k, v) => updateParsedField(index, k, v)}
+                                                onRemove={parsedFields.length > 1 ? () => removeParsedField(index) : null}
+                                                openTypeModal={() => openTypeModal({ mode: 'parsed', index })}
+                                            />
+                                        ))}
+                                    </div>
+
+                                    <div className="form-section" style={{ marginTop: '30px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                            <h4 style={{ margin: 0 }}>Data Groups</h4>
+                                            <button type="button" onClick={addParsedGroup} className="add-btn">+ Add Group</button>
+                                        </div>
+                                        {parsedGroups.map((group, index) => (
+                                            <GroupEditor
+                                                key={index}
+                                                group={group}
+                                                fields={parsedFields.filter(f => f.name)}
+                                                onChange={(k, v) => updateParsedGroup(index, k, v)}
+                                                onRemove={parsedGroups.length > 1 ? () => removeParsedGroup(index) : null}
+                                            />
+                                        ))}
+                                    </div>
+
+                                    <div style={{ marginTop: '40px', display: 'flex', justifyContent: 'center' }}>
+                                        <button
+                                            type="submit"
+                                            className="generate-big-btn"
+                                            disabled={loading}
+                                        >
+                                            {loading ? '⏳ Generating...' : '🚀 Generate High-Fidelity Test Data'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     ) : mode === 'script-executor' ? (
                         <ScriptExecutor onSchemaGenerated={handleSchemaGenerated} />
                     ) : null}

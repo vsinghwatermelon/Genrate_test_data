@@ -40,7 +40,16 @@
 
 .fe-preview {
     font-size: 13px;
-    color: #333
+    color: #475569;
+}
+
+.fe-preview code {
+    background: #f8fafc;
+    color: #64748b;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-weight: 600;
+    border: 1px solid #e2e8f0;
 }
 
 .fe-remove {

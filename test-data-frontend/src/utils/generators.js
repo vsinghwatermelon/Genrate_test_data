@@ -48,8 +48,8 @@ export function generateSample(typeId) {
         case 'integer': return String(randomInt(0, 9999));
         case 'float': return (Math.random() * 100).toFixed(4);
         default:
-            // fallback: return the declared example if any, else a lorem word
-            return (t && t.example) || 'example_value';
+            // fallback: return the declared example if any, else empty
+            return (t && t.example) || '';
     }
 }
 

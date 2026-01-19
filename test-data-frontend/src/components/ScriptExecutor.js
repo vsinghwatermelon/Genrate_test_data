@@ -233,6 +233,14 @@ function ScriptExecutor({ onSchemaGenerated }) {
         }
     };
 
+    const sanitizeFields = (fields) => {
+        return fields.map(f => ({
+            ...f,
+            rules: f.rules === null || f.rules === undefined ? "" : String(f.rules),
+            example: f.example === null || f.example === undefined ? "" : String(f.example)
+        }));
+    };
+
     const handleGenerateData = async () => {
         setIsGenerating(true);
         setError('');
@@ -241,7 +249,7 @@ function ScriptExecutor({ onSchemaGenerated }) {
         try {
             const validFields = editorFields.filter(f => f.name && f.name.trim() !== '');
             const payload = {
-                schema_fields: validFields,
+                schema_fields: sanitizeFields(validFields),
                 groups: groups,
                 model_provider: 'groq' // Defaulting to cloud for speed in executor
             };
