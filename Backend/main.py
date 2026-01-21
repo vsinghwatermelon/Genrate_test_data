@@ -21,17 +21,11 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, status, UploadFile, File
 from fastapi.responses import JSONResponse
-import zipfile
-import io
-import tempfile
 import os
 import logging
 
 from config import get_config
-from data_generator import TestDataGenerator
 from llm_factory import LLMFactory
-from selenium_llm_parser import parse_selenium_script
-from selenium_extractor import preprocess_selenium_script, download_html_from_script, extract_fields_from_html
 from models import (
     GenerateRequest,
     GenerateResponse,

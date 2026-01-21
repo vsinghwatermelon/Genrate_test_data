@@ -256,15 +256,3 @@ class LLMFactory:
         cls.PROVIDERS[name.lower()] = llm_class
 
 
-# =============================================================================
-# CONVENIENCE FUNCTIONS
-# =============================================================================
-
-def get_ollama(model: str = "llama3:latest", temperature: float = 0.7) -> OllamaLLM:
-    """Get an Ollama LLM client."""
-    return LLMFactory.create("ollama", model_name=model, temperature=temperature)
-
-
-def get_groq(model: Optional[str] = None, temperature: float = 0.7) -> GroqLLM:
-    """Get a Groq LLM client."""
-    return LLMFactory.create("groq", model_name=model, temperature=temperature)

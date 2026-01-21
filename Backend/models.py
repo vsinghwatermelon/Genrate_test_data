@@ -20,41 +20,7 @@ class LLMProvider(str, Enum):
     GROQ = "groq"
 
 
-class FieldType(str, Enum):
-    """Supported field types for data generation."""
-    STRING = "string"
-    EMAIL = "email"
-    PHONE = "phone"
-    INTEGER = "integer"
-    NUMBER = "number"
-    FLOAT = "float"
-    DATE = "date"
-    DATETIME = "datetime"
-    BOOLEAN = "boolean"
-    UUID = "uuid"
-    URL = "url"
-    ADDRESS = "address"
-    CITY = "city"
-    STATE = "state"
-    POSTAL_CODE = "postal_code"
-    COUNTRY = "country"
-    FIRST_NAME = "first_name"
-    LAST_NAME = "last_name"
-    FULL_NAME = "full_name"
-    USERNAME = "username"
-    PASSWORD = "password"
-    CREDIT_CARD = "credit_card"
-    SSN = "ssn"
-    PAN = "pan"
-    IFSC = "ifsc"
-    ACCOUNT_NUMBER = "account_number"
-    CURRENCY = "currency"
-    COMPANY = "company"
-    JOB_TITLE = "job_title"
-    PARAGRAPH = "paragraph"
-    SENTENCE = "sentence"
-    WORD = "word"
-    CUSTOM = "custom"
+
 
 
 # =============================================================================

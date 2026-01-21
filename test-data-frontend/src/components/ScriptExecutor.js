@@ -377,6 +377,28 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                 </div>
                             </div>
 
+                            {executionResult.tracked_actions.screenshots?.length > 0 && (
+                                <div className="screenshots-section">
+                                    <h4>📸 Execution Visuals</h4>
+                                    <div className="screenshots-gallery">
+                                        {executionResult.tracked_actions.screenshots.map((ss, idx) => (
+                                            <div key={idx} className="screenshot-item">
+                                                <div
+                                                    className="screenshot-img-container"
+                                                    onClick={() => {
+                                                        const win = window.open();
+                                                        win.document.write(`<img src="${ss.data}" style="width:100%"/>`);
+                                                    }}
+                                                >
+                                                    <img src={ss.data} alt={ss.label} />
+                                                </div>
+                                                <div className="screenshot-label">{ss.label}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             {executionResult.tracked_actions.clicked_elements?.length > 0 && (
                                 <div className="actions-section">
                                     <h4>🖱️ Clicked Elements</h4>
@@ -733,226 +755,231 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                 </div>
                             )}
                         </>
-                    )}
+                    )
+                    }
 
                     {/* For analysis results (without execution) */}
-                    {executionResult.actions && (
-                        <div className="actions-section">
-                            <h4>📋 Expected Actions</h4>
-                            <div className="analysis-info">
-                                <p><strong>Script:</strong> {executionResult.script_name}</p>
-                                <p><strong>Target URL:</strong> {executionResult.target_url || 'Not found'}</p>
-                                <p><strong>Total Actions:</strong> {executionResult.total_actions}</p>
-                            </div>
-                            <div className="actions-list">
-                                {executionResult.actions.map((action, idx) => (
-                                    <div key={idx} className="action-item analysis-item">
-                                        <span className="action-number">#{idx + 1}</span>
-                                        <span className="action-type">{action.action}</span>
-                                        <span className="action-locator">{action.locator}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {parsedSchema && (
-                <div className="parsed-schema-section">
-                    <h3>🎯 Generated Schema</h3>
-                    <div className="schema-info">
-                        <p><strong>Total Fields:</strong> {parsedSchema.total_fields}</p>
-                        <p><strong>Average Confidence:</strong> {parsedSchema.parsed_schema?.reduce((sum, f) => sum + (f.confidence * 100), 0) / parsedSchema.parsed_schema?.length || 0}%</p>
-                    </div>
-                    <div className="schema-fields">
-                        {parsedSchema.parsed_schema?.map((field, idx) => (
-                            <div key={idx} className="schema-field-card">
-                                <div className="field-header">
-                                    <span className="field-name">{field.name}</span>
-                                    <span className="field-type">{field.type}</span>
+                    {
+                        executionResult.actions && (
+                            <div className="actions-section">
+                                <h4>📋 Expected Actions</h4>
+                                <div className="analysis-info">
+                                    <p><strong>Script:</strong> {executionResult.script_name}</p>
+                                    <p><strong>Target URL:</strong> {executionResult.target_url || 'Not found'}</p>
+                                    <p><strong>Total Actions:</strong> {executionResult.total_actions}</p>
                                 </div>
-                                <div className="field-details">
-                                    {field.description && (
-                                        <div className="field-row">
-                                            <span className="field-label">Description:</span>
-                                            <span className="field-value">{field.description}</span>
+                                <div className="actions-list">
+                                    {executionResult.actions.map((action, idx) => (
+                                        <div key={idx} className="action-item analysis-item">
+                                            <span className="action-number">#{idx + 1}</span>
+                                            <span className="action-type">{action.action}</span>
+                                            <span className="action-locator">{action.locator}</span>
                                         </div>
-                                    )}
-                                    {field.rules && (
-                                        <div className="field-row">
-                                            <span className="field-label">Rules:</span>
-                                            <span className="field-value">{typeof field.rules === 'string' ? field.rules : field.rules.join(', ')}</span>
-                                        </div>
-                                    )}
-                                    {field.example && (
-                                        <div className="field-row">
-                                            <span className="field-label">Example:</span>
-                                            <span className="field-value">{field.example}</span>
-                                        </div>
-                                    )}
-                                    {field.confidence && (
-                                        <div className="field-row">
-                                            <span className="field-label">Confidence:</span>
-                                            <span className="field-value">{(field.confidence * 100).toFixed(0)}%</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="schema-note">
-                        💡 This schema has been automatically generated from the tracked actions.
-                        <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
-                            {!showEditorInline ? (
-                                <button
-                                    onClick={() => {
-                                        setEditorFields(parsedSchema.parsed_schema || []);
-                                        setShowEditorInline(true);
-                                    }}
-                                    className="btn btn-primary"
-                                    style={{ width: 'auto' }}
-                                >
-                                    📝 Edit Schema & Configure Groups
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={() => setShowEditorInline(false)}
-                                    className="btn btn-secondary"
-                                    style={{ width: 'auto' }}
-                                >
-                                    Hide Editor
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    {showEditorInline && (
-                        <div className="inline-editor-container" style={{
-                            marginTop: '20px',
-                            padding: '20px',
-                            background: '#f8f9fa',
-                            borderRadius: '12px',
-                            border: '1px solid #e9ecef'
-                        }}>
-                            <h3 style={{ marginBottom: '20px' }}>🛠️ Professional Schema Editor</h3>
-
-                            {/* Field Editor Section */}
-                            <div className="form-section">
-                                <h4 style={{ color: '#2c3e50', marginBottom: '15px' }}>Field Definitions</h4>
-                                {editorFields.map((field, index) => (
-                                    <FieldEditor
-                                        key={index}
-                                        field={field}
-                                        onChange={(k, v) => {
-                                            const updated = [...editorFields];
-                                            updated[index][k] = v;
-                                            setEditorFields(updated);
-                                        }}
-                                        onRemove={() => {
-                                            setEditorFields(editorFields.filter((_, i) => i !== index));
-                                        }}
-                                        openTypeModal={() => openTypeModal(index)}
-                                        hideExample={true}
-                                    />
-                                ))}
-                                <button
-                                    className="btn btn-secondary"
-                                    style={{ marginTop: '10px' }}
-                                    onClick={() => setEditorFields([...editorFields, { name: '', type: 'string', rules: '', example: '' }])}
-                                >
-                                    + Add Field
-                                </button>
-                            </div>
-
-                            {/* Group Configuration Section */}
-                            <div className="form-section" style={{ marginTop: '30px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                                    <h4 style={{ color: '#2c3e50', margin: 0 }}>📊 Target Data Groups</h4>
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={() => setGroups([...groups, { name: `G${groups.length + 1}`, count: 5, correct_fields: [], wrong_fields: [], wrong_field_rules: {} }])}
-                                    >
-                                        + Add Group
-                                    </button>
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                                    {groups.map((group, index) => (
-                                        <GroupEditor
-                                            key={index}
-                                            group={group}
-                                            fields={editorFields.filter(f => f.name)}
-                                            onChange={(k, v) => {
-                                                const updated = [...groups];
-                                                updated[index][k] = v;
-                                                setGroups(updated);
-                                            }}
-                                            onRemove={() => setGroups(groups.filter((_, i) => i !== index))}
-                                        />
                                     ))}
                                 </div>
                             </div>
+                        )
+                    }
+                </div >
+            )}
 
-                            <div style={{ marginTop: '30px', borderTop: '2px solid #eee', paddingTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
-                                <button
-                                    className="btn btn-generate"
-                                    style={{
-                                        padding: '12px 30px',
-                                        fontSize: '16px',
-                                        fontWeight: 'bold',
-                                        background: '#27ae60',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '8px',
-                                        cursor: 'pointer'
-                                    }}
-                                    onClick={handleGenerateData}
-                                    disabled={isGenerating}
-                                >
-                                    {isGenerating ? '⏳ Generating Test Data...' : '🚀 Generate Test Data Now'}
-                                </button>
-                            </div>
-
-                            {generationResponse && (
-                                <div className="generation-results" style={{ marginTop: '30px' }}>
-                                    <h3 style={{ color: '#27ae60' }}>✅ Successfully Generated {generationResponse.count} Records</h3>
-                                    <div className="data-preview" style={{
-                                        background: '#1e272e',
-                                        color: '#ecf0f1',
-                                        padding: '15px',
-                                        borderRadius: '8px',
-                                        maxHeight: '400px',
-                                        overflow: 'auto',
-                                        marginTop: '10px'
-                                    }}>
-                                        <pre style={{ margin: 0, fontSize: '13px' }}>
-                                            {JSON.stringify(generationResponse.data, null, 2)}
-                                        </pre>
+            {
+                parsedSchema && (
+                    <div className="parsed-schema-section">
+                        <h3>🎯 Generated Schema</h3>
+                        <div className="schema-info">
+                            <p><strong>Total Fields:</strong> {parsedSchema.total_fields}</p>
+                            <p><strong>Average Confidence:</strong> {parsedSchema.parsed_schema?.reduce((sum, f) => sum + (f.confidence * 100), 0) / parsedSchema.parsed_schema?.length || 0}%</p>
+                        </div>
+                        <div className="schema-fields">
+                            {parsedSchema.parsed_schema?.map((field, idx) => (
+                                <div key={idx} className="schema-field-card">
+                                    <div className="field-header">
+                                        <span className="field-name">{field.name}</span>
+                                        <span className="field-type">{field.type}</span>
                                     </div>
-                                    <div style={{ marginTop: '15px' }}>
-                                        <button
-                                            className="btn btn-secondary"
-                                            onClick={() => {
-                                                const csvContent = "data:text/csv;charset=utf-8,"
-                                                    + Object.keys(generationResponse.data[0]).join(",") + "\n"
-                                                    + generationResponse.data.map(row => Object.values(row).join(",")).join("\n");
-                                                const encodedUri = encodeURI(csvContent);
-                                                const link = document.createElement("a");
-                                                link.setAttribute("href", encodedUri);
-                                                link.setAttribute("download", "generated_test_data.csv");
-                                                document.body.appendChild(link);
-                                                link.click();
-                                            }}
-                                        >
-                                            📥 Download as CSV
-                                        </button>
+                                    <div className="field-details">
+                                        {field.description && (
+                                            <div className="field-row">
+                                                <span className="field-label">Description:</span>
+                                                <span className="field-value">{field.description}</span>
+                                            </div>
+                                        )}
+                                        {field.rules && (
+                                            <div className="field-row">
+                                                <span className="field-label">Rules:</span>
+                                                <span className="field-value">{typeof field.rules === 'string' ? field.rules : field.rules.join(', ')}</span>
+                                            </div>
+                                        )}
+                                        {field.example && (
+                                            <div className="field-row">
+                                                <span className="field-label">Example:</span>
+                                                <span className="field-value">{field.example}</span>
+                                            </div>
+                                        )}
+                                        {field.confidence && (
+                                            <div className="field-row">
+                                                <span className="field-label">Confidence:</span>
+                                                <span className="field-value">{(field.confidence * 100).toFixed(0)}%</span>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-                            )}
+                            ))}
                         </div>
-                    )}
-                </div>
-            )}
+                        <div className="schema-note">
+                            💡 This schema has been automatically generated from the tracked actions.
+                            <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+                                {!showEditorInline ? (
+                                    <button
+                                        onClick={() => {
+                                            setEditorFields(parsedSchema.parsed_schema || []);
+                                            setShowEditorInline(true);
+                                        }}
+                                        className="btn btn-primary"
+                                        style={{ width: 'auto' }}
+                                    >
+                                        📝 Edit Schema & Configure Groups
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={() => setShowEditorInline(false)}
+                                        className="btn btn-secondary"
+                                        style={{ width: 'auto' }}
+                                    >
+                                        Hide Editor
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {showEditorInline && (
+                            <div className="inline-editor-container" style={{
+                                marginTop: '20px',
+                                padding: '20px',
+                                background: '#f8f9fa',
+                                borderRadius: '12px',
+                                border: '1px solid #e9ecef'
+                            }}>
+                                <h3 style={{ marginBottom: '20px' }}>🛠️ Professional Schema Editor</h3>
+
+                                {/* Field Editor Section */}
+                                <div className="form-section">
+                                    <h4 style={{ color: '#2c3e50', marginBottom: '15px' }}>Field Definitions</h4>
+                                    {editorFields.map((field, index) => (
+                                        <FieldEditor
+                                            key={index}
+                                            field={field}
+                                            onChange={(k, v) => {
+                                                const updated = [...editorFields];
+                                                updated[index][k] = v;
+                                                setEditorFields(updated);
+                                            }}
+                                            onRemove={() => {
+                                                setEditorFields(editorFields.filter((_, i) => i !== index));
+                                            }}
+                                            openTypeModal={() => openTypeModal(index)}
+                                            hideExample={true}
+                                        />
+                                    ))}
+                                    <button
+                                        className="btn btn-secondary"
+                                        style={{ marginTop: '10px' }}
+                                        onClick={() => setEditorFields([...editorFields, { name: '', type: 'string', rules: '', example: '' }])}
+                                    >
+                                        + Add Field
+                                    </button>
+                                </div>
+
+                                {/* Group Configuration Section */}
+                                <div className="form-section" style={{ marginTop: '30px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                        <h4 style={{ color: '#2c3e50', margin: 0 }}>📊 Target Data Groups</h4>
+                                        <button
+                                            className="btn btn-primary"
+                                            onClick={() => setGroups([...groups, { name: `G${groups.length + 1}`, count: 5, correct_fields: [], wrong_fields: [], wrong_field_rules: {} }])}
+                                        >
+                                            + Add Group
+                                        </button>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                        {groups.map((group, index) => (
+                                            <GroupEditor
+                                                key={index}
+                                                group={group}
+                                                fields={editorFields.filter(f => f.name)}
+                                                onChange={(k, v) => {
+                                                    const updated = [...groups];
+                                                    updated[index][k] = v;
+                                                    setGroups(updated);
+                                                }}
+                                                onRemove={() => setGroups(groups.filter((_, i) => i !== index))}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div style={{ marginTop: '30px', borderTop: '2px solid #eee', paddingTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button
+                                        className="btn btn-generate"
+                                        style={{
+                                            padding: '12px 30px',
+                                            fontSize: '16px',
+                                            fontWeight: 'bold',
+                                            background: '#27ae60',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer'
+                                        }}
+                                        onClick={handleGenerateData}
+                                        disabled={isGenerating}
+                                    >
+                                        {isGenerating ? '⏳ Generating Test Data...' : '🚀 Generate Test Data Now'}
+                                    </button>
+                                </div>
+
+                                {generationResponse && (
+                                    <div className="generation-results" style={{ marginTop: '30px' }}>
+                                        <h3 style={{ color: '#27ae60' }}>✅ Successfully Generated {generationResponse.count} Records</h3>
+                                        <div className="data-preview" style={{
+                                            background: '#1e272e',
+                                            color: '#ecf0f1',
+                                            padding: '15px',
+                                            borderRadius: '8px',
+                                            maxHeight: '400px',
+                                            overflow: 'auto',
+                                            marginTop: '10px'
+                                        }}>
+                                            <pre style={{ margin: 0, fontSize: '13px' }}>
+                                                {JSON.stringify(generationResponse.data, null, 2)}
+                                            </pre>
+                                        </div>
+                                        <div style={{ marginTop: '15px' }}>
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => {
+                                                    const csvContent = "data:text/csv;charset=utf-8,"
+                                                        + Object.keys(generationResponse.data[0]).join(",") + "\n"
+                                                        + generationResponse.data.map(row => Object.values(row).join(",")).join("\n");
+                                                    const encodedUri = encodeURI(csvContent);
+                                                    const link = document.createElement("a");
+                                                    link.setAttribute("href", encodedUri);
+                                                    link.setAttribute("download", "generated_test_data.csv");
+                                                    document.body.appendChild(link);
+                                                    link.click();
+                                                }}
+                                            >
+                                                📥 Download as CSV
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )
+            }
             {/* Rich Type Selector Modal */}
             <TypeModal
                 show={showTypeModal}
@@ -960,7 +987,7 @@ function ScriptExecutor({ onSchemaGenerated }) {
                 types={allDataTypes}
                 onSelect={handleTypeSelect}
             />
-        </div>
+        </div >
     );
 }
 

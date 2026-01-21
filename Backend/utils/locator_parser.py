@@ -8,8 +8,18 @@ Dynamically parses locator configuration files in various formats
 import re
 import json
 import ast
+import os
+import uuid
+import time
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
+from bs4 import BeautifulSoup
+
+from utils.selenium_utils import create_chrome_driver
+from llm_factory import LLMFactory, BaseLLM
+from prompts import SeleniumParserPrompts
+from utils.json_utils import JSONCleaner, JSONExtractor, NDJSONParser
+from utils.console import safe_print
 
 
 class LocatorParser:
@@ -30,9 +40,21 @@ class LocatorParser:
         
         # Try safe execution first
         try:
-            exec_context = {}
-            # Use a fresh dict for globals to avoid pollution
-            exec(content, {"__builtins__": __builtins__}, exec_context)
+            # Add common automation imports to context to help exec() succeed
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.common.keys import Keys
+            import os, json, sys, re
+            
+            exec_context = {
+                "By": By,
+                "Keys": Keys,
+                "os": os,
+                "json": json,
+                "sys": sys,
+                "re": re,
+                "__builtins__": __builtins__
+            }
+            exec(content, exec_context, exec_context)
             
             # 1. Look for common locator variable names
             for var_name in ['locators', 'LOCATORS', 'elements', 'ELEMENTS', 'selectors', 'SELECTORS']:
@@ -42,12 +64,47 @@ class LocatorParser:
             # 2. If no standard variable found, collect everything that looks like a locator
             # (starts with locator_ or ends with _locator, etc.)
             collected = {}
+            keywords = ['locator', 'element', 'selector', 'btn', 'input', 'field', 'key', 'id', 'xpath', 'css', 'item', 'link', 'txt']
+            
+            def collect_from_obj(obj, prefix=""):
+                for name in dir(obj):
+                    if name.startswith('__'): continue
+                    try:
+                        val = getattr(obj, name)
+                        name_lower = name.lower()
+                        full_name = f"{prefix}.{name}" if prefix else name
+                        
+                        if any(k in name_lower for k in keywords):
+                            if isinstance(val, (dict, list, tuple, str)):
+                                collected[full_name] = val
+                        elif isinstance(val, dict) and len(val) > 2:
+                            collected[full_name] = val
+                    except: continue
+
             for name, val in exec_context.items():
                 if name.startswith('__'): continue
+                
+                # NEW: Look into any dictionary or list for locator signatures
+                # We collect ANYTHING that looks like it contains a selector, regardless of variable name
+                val_str = str(val).lower()
+                is_locator_pattern = any(k in val_str for k in ['xpath', 'cssselector', '//', './', '[id=', '[name=', 'css='])
                 name_lower = name.lower()
-                if any(k in name_lower for k in ['locator', 'element', 'selector', 'btn', 'input', 'field']):
-                    if isinstance(val, (dict, list, tuple, str)):
+                
+                if isinstance(val, (dict, list, tuple)):
+                    if is_locator_pattern:
                         collected[name] = val
+                    elif any(k in name_lower for k in keywords):
+                        collected[name] = val
+                    elif isinstance(val, dict) and len(val) > 1:
+                        # Even if no pattern, if it's in a class and has a dict, it's likely a config
+                        if prefix: collected[name] = val
+                
+                elif isinstance(val, str) and (val.startswith('//') or val.startswith('./')):
+                    collected[name] = val
+
+                # If it's a class, look inside
+                if isinstance(val, type):
+                    collect_from_obj(val, name)
             
             if collected:
                 return collected
@@ -74,12 +131,25 @@ class LocatorParser:
                                     pass
                             
                             # Otherwise collect it
-                            if any(k in var_name.lower() for k in ['locator', 'element', 'selector']):
-                                try:
-                                    collected[var_name] = ast.literal_eval(node.value)
-                                except:
-                                    pass
+                            keywords = ['locator', 'element', 'selector', 'btn', 'input', 'field', 'key', 'id', 'xpath', 'css', 'item']
+                            name_lower = var_name.lower()
+                            
+                            try:
+                                val = ast.literal_eval(node.value)
+                                val_str = str(val).lower()
+                                is_locator_pattern = any(k in val_str for k in ['xpath', 'cssselector', '//', './'])
+                                
+                                if is_locator_pattern or any(k in name_lower for k in keywords):
+                                    collected[var_name] = val
+                                elif isinstance(val, (dict, list)) and len(val) > 0:
+                                    # Collect any non-empty dict/list just in case
+                                    collected[var_name] = val
+                            except:
+                                pass
             if collected:
+                # NEW: Try to normalize the structure so it's always mapping to something useful
+                # (handled by caller like SeleniumScriptExecutor._convert_to_selenium_format, 
+                # but let's be as clean as possible)
                 return collected
         except Exception as e:
             print(f"[WARNING] AST parsing failed: {e}")
@@ -339,7 +409,7 @@ class ScriptAnalyzer:
                     continue
                 
                 # Identify locator config files
-                if 'locator' in fname_lower or 'config' in fname_lower:
+                if any(k in fname_lower for k in ['locator', 'config', 'keys', 'elements', 'selectors']):
                     if fname.endswith(('.py', '.json', '.yaml', '.yml')):
                         logger.info(f"  → Found locator config: {fname}")
                         locator_files.append(full_path)
@@ -410,5 +480,146 @@ class ScriptAnalyzer:
         return main_script, locator_files
 
 
-# Import os for the identify_script_files method
-import os
+    @staticmethod
+    def preprocess_selenium_script(script_text: str) -> str:
+        """
+        Main preprocessing function.
+        Extracts values and formats them for the LLM parser.
+        """
+        def get_label(soup, element):
+            """Helper to find label text for an element."""
+            el_id = element.get('id')
+            if el_id:
+                label = soup.find('label', attrs={'for': el_id})
+                if label:
+                    return label.get_text(strip=True)
+            parent_label = element.find_parent('label')
+            if parent_label:
+                return parent_label.get_text(strip=True)
+            aria_label = element.get('aria-label')
+            if aria_label:
+                return aria_label
+            next_sib = element.find_next_sibling()
+            if next_sib and next_sib.name in ['span', 'div', 'label', 'p']:
+                text = next_sib.get_text(strip=True)
+                if text: return text
+            prev_sib = element.find_previous_sibling()
+            if prev_sib and prev_sib.name in ['span', 'div', 'label', 'p']:
+                text = prev_sib.get_text(strip=True)
+                if text: return text
+            parent = element.parent
+            if parent:
+                parent_text = parent.get_text(strip=True)
+                if len(parent_text) < 100: 
+                    return parent_text
+            return "N/A"
+
+        def extract_fields_from_html(file_path: str) -> str:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    soup = BeautifulSoup(f, 'html.parser')
+                extracted_info = []
+                for inp in soup.find_all('input'):
+                    type_attr = inp.get('type', 'text')
+                    if type_attr not in ['hidden', 'submit', 'button', 'image', 'reset']:
+                        label = " ".join((get_label(soup, inp) or "N/A").split())
+                        extracted_info.append(f"Input Field - Label: {label}, Name: {inp.get('name', 'N/A')}, ID: {inp.get('id', 'N/A')}, Type: {type_attr}, Placeholder: {inp.get('placeholder', 'N/A')}")
+                for sel in soup.find_all('select'):
+                    label = " ".join((get_label(soup, sel) or "N/A").split())
+                    options = [opt.get_text(strip=True) for opt in sel.find_all('option')]
+                    options_str = ", ".join(options[:10]) + ("..." if len(options) > 10 else "")
+                    extracted_info.append(f"Dropdown Field - Label: {label}, Name: {sel.get('name', 'N/A')}, ID: {sel.get('id', 'N/A')}, Options: [{options_str}]")
+                for ta in soup.find_all('textarea'):
+                    label = " ".join((get_label(soup, ta) or "N/A").split())
+                    extracted_info.append(f"Textarea Field - Label: {label}, Name: {ta.get('name', 'N/A')}, ID: {ta.get('id', 'N/A')}, Placeholder: {ta.get('placeholder', 'N/A')}")
+                return "\n".join(extracted_info)
+            except Exception as e:
+                print(f"Error parsing HTML {file_path}: {e}")
+                return ""
+
+        def download_html_from_script(script_text: str, output_dir: str = "downloaded_pages") -> List[str]:
+            downloaded_files = []
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+            url_patterns = [r"driver\.go_to\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", r"driver\.get\s*\(\s*['\"]([^'\"]+)['\"]\s*\)"]
+            urls = set()
+            for p in url_patterns:
+                for m in re.finditer(p, script_text):
+                    urls.add(m.group(1))
+            if not urls: return []
+            try:
+                driver = create_chrome_driver(headless=True)
+                for url in urls:
+                    try:
+                        target_url = url if url.startswith(('http://', 'https://')) else 'https://' + url
+                        driver.get(target_url)
+                        time.sleep(5)
+                        full_html = driver.execute_script("return document.body.innerHTML;")
+                        filename = f"page_{uuid.uuid4().hex[:8]}.html"
+                        filepath = os.path.join(output_dir, filename)
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(full_html)
+                        downloaded_files.append(filepath)
+                    except Exception as e:
+                        print(f"Error downloading {url}: {e}")
+                driver.quit()
+            except Exception as e:
+                print(f"Driver failure: {e}")
+            return downloaded_files
+
+        field_related_lines = []
+        patterns = ['driver.enter_text', 'driver.click', 'driver.select', 'args.get(']
+        for line in script_text.splitlines():
+            if any(p in line for p in patterns):
+                field_related_lines.append(line.strip())
+
+        formatted_text = "Relevant Selenium script lines:\n\n"
+        for i, l in enumerate(field_related_lines, 1):
+            formatted_text += f"{i}. {l}\n"
+
+        downloaded = download_html_from_script(script_text)
+        if downloaded:
+            formatted_text += "\nExtracted HTML Page Details:\n"
+            for f in downloaded:
+                fields = extract_fields_from_html(f)
+                if fields:
+                    formatted_text += f"\n--- Fields from {os.path.basename(f)} ---\n{fields}\n"
+                os.remove(f)
+        return formatted_text
+
+    @staticmethod
+    def parse_selenium_script(script_text: str, provider: str = "ollama", model_name: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Parse a Selenium script or preprocessed text using LLM."""
+        try:
+            llm = LLMFactory.create_llm(provider=provider, model_name=model_name or "llama3:latest", temperature=0.0)
+            prompt = SeleniumParserPrompts.create_parse_prompt(script_text or '')
+            response = llm.invoke(prompt)
+            
+            # Internal parsing logic moved from selenium_llm_parser
+            assembled = NDJSONParser.parse(response) or response
+            json_str = JSONExtractor.extract_json(assembled, expect_array=True) or assembled.strip()
+            json_str = JSONCleaner.clean(json_str)
+            
+            try:
+                parsed = json.loads(json_str, strict=False)
+            except:
+                try:
+                    parsed = json.loads(JSONCleaner.repair(json_str), strict=False)
+                except Exception as e:
+                    return [], f"JSON parse failed: {str(e)}"
+            
+            if not isinstance(parsed, list): parsed = [parsed]
+            
+            normalized = []
+            for item in parsed:
+                if isinstance(item, dict):
+                    normalized.append({
+                        'name': str(item.get('name', '')).strip(),
+                        'type': str(item.get('type', 'string')),
+                        'rules': str(item.get('rules', '') or ''),
+                        'description': str(item.get('description', '') or ''),
+                        'example': str(item.get('example', '') or '')
+                    })
+            return normalized, None
+        except Exception as e:
+            return [], f"LLM parsing failed: {str(e)}"

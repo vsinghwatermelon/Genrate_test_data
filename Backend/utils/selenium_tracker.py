@@ -7,6 +7,7 @@ structured data about the interactions.
 """
 
 import logging
+import base64
 from typing import List, Dict, Any
 from selenium.webdriver.remote.webelement import WebElement
 try:
@@ -30,6 +31,7 @@ class SeleniumActionTracker:
         self.clicked_elements = []
         self.filled_fields = []
         self.actions_log = []
+        self.screenshots = []
     
     def _extract_element_info(self, element: WebElement, locator: str, action: str, description: str = "") -> Dict[str, Any]:
         """
@@ -55,7 +57,15 @@ class SeleniumActionTracker:
                 "tag_name": tag_name,
                 "text": text,
                 "description": description,
+                "page_url": "",
+                "page_title": ""
             }
+            
+            # Extract window info (URL, Title)
+            try:
+                info["page_url"] = element.parent.current_url
+                info["page_title"] = element.parent.title
+            except: pass
             
             # Use a consolidated JS block to extract EVERYTHING in one go
             # This is much faster and more resistant to stale element errors
@@ -468,6 +478,43 @@ class SeleniumActionTracker:
         self.actions_log.append(info)
         print(f"[TAB] Switched to tab: {tab_index_or_handle}")
 
+    def capture_screenshot(self, driver, label: str = "screenshot"):
+        """
+        Capture a screenshot and store it as base64
+        """
+        if not driver:
+            return
+
+        try:
+            # Check if driver is still alive/connected
+            # We try a simple property access to verify connection
+            
+            # Temporarily silence connection-level logging to avoid noisy retries in logs
+            conn_logger = logging.getLogger('urllib3.connectionpool')
+            remote_logger = logging.getLogger('selenium.webdriver.remote.remote_connection')
+            old_conn_level = conn_logger.level
+            old_remote_level = remote_logger.level
+            conn_logger.setLevel(logging.ERROR)
+            remote_logger.setLevel(logging.ERROR)
+
+            try:
+                _ = driver.current_window_handle
+            finally:
+                conn_logger.setLevel(old_conn_level)
+                remote_logger.setLevel(old_remote_level)
+            
+            screenshot_b64 = driver.get_screenshot_as_base64()
+            self.screenshots.append({
+                "label": label,
+                "data": f"data:image/png;base64,{screenshot_b64}",
+                "timestamp": len(self.actions_log) # Using log length as pseudo-index
+            })
+            logger.info(f"[SCREENSHOT] Captured: {label}")
+            print(f"[SCREENSHOT] Captured: {label}")
+        except Exception as e:
+            # Silently ignore if driver is closed (common at end of script)
+            logger.debug(f"Could not capture screenshot (driver likely closed): {e}")
+
     def get_summary(self) -> Dict[str, Any]:
         """
         Get a summary of all tracked actions
@@ -479,6 +526,7 @@ class SeleniumActionTracker:
             "clicked_elements": self.clicked_elements,
             "filled_fields": self.filled_fields,
             "actions_log": self.actions_log,
+            "screenshots": self.screenshots,
             "verifications": [a for a in self.actions_log if a.get('action') == 'verify'],
             "text_retrievals": [a for a in self.actions_log if a.get('action') == 'get_text'],
             "summary": {

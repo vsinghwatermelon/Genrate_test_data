@@ -26,7 +26,7 @@ from utils.schema_generator import SchemaGenerator
 
 __all__ = [
     'JSONCleaner',
-    'JSONExtractor', 
+    'JSONExtractor',
     'NDJSONParser',
     'parse_llm_json_response',
     'safe_print',
@@ -37,4 +37,8 @@ __all__ = [
     'print_warning',
     'print_info',
     'print_debug',
+    'SchemaGenerator',
+    'LocatorParser',
+    'ScriptAnalyzer',
+    'HTMLFieldExtractor',
 ]

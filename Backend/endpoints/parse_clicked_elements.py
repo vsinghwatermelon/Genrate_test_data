@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import json
-from groq import Groq
+from llm_factory import LLMFactory
 import os
 
 router = APIRouter()
@@ -41,12 +41,17 @@ async def parse_clicked_elements(request: ParseRequest):
     Parse clicked elements into a schema using LLM
     """
     try:
-        # Initialize Groq client
-        api_key = os.getenv("groq_api_key", "")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+        # Use LLMFactory instead of direct Groq client
+        # Default to groq for this specific high-intelligence task if possible, else use ollama
+        provider = os.getenv("LLM_PROVIDER", "groq")
+        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile") if provider == "groq" else None
         
-        client = Groq(api_key=api_key)
+        try:
+            llm = LLMFactory.create_llm(provider=provider, model_name=model)
+        except Exception as e:
+            # Fallback to ollama if groq fails/not config
+            print(f"[WARN] Failed to init {provider}, falling back to ollama: {e}")
+            llm = LLMFactory.create_llm(provider="ollama")
         
         # Format the clicked elements for the LLM
         elements_text = _format_elements_for_llm(request.clicked_elements, request.filled_fields)
@@ -91,26 +96,9 @@ Generate a JSON array of objects:
 
 Return ONLY the valid JSON array."""
 
-        # Call the LLM
-        print(f"[PARSE] Calling LLM to parse {len(request.clicked_elements)} elements with semantic insights...")
+        print(f"[PARSE] Calling LLM ({llm.model_name}) to parse {len(request.clicked_elements)} elements...")
         
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a test data schema generation expert. You use semantic roles and page context to identify field intent accurately. Return only valid JSON."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model="llama-3.3-70b-versatile",
-            temperature=0.2,
-            max_tokens=4000,
-        )
-        
-        response_text = chat_completion.choices[0].message.content.strip()
+        response_text = llm.invoke(prompt).strip()
         
         # Clean up the response
         if "```json" in response_text:

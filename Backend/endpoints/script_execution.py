@@ -61,6 +61,8 @@ async def execute_selenium_script(
             logger.info(f"Saved uploaded file: {file_size_mb:.2f} MB")
             
             # Step 2: Execute script with tracking
+            # The executor will handle extraction to a temporary directory,
+            # set sys.path priority, and manage module isolation.
             print("\n[STEP 2] Executing script...")
             result = SeleniumScriptExecutor.execute_from_zip(
                 zip_path=zip_path,

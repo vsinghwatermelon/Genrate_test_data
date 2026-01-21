@@ -33,8 +33,12 @@ def create_chrome_driver(headless: bool = True, additional_options: list = None)
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-plugins")
-    chrome_options.add_argument("--disable-images")  # Speed up loading
-    chrome_options.add_argument("--disable-javascript")  # Can be enabled if needed
+    
+    if headless:
+        chrome_options.add_argument("--disable-images")  # Speed up loading in headless
+    
+    # JavaScript should ALMOST ALWAYS be enabled for modern apps
+    # chrome_options.add_argument("--disable-javascript")  <- WRONG: Removed
 
     # Add any additional options
     if additional_options:

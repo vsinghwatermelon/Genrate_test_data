@@ -9,8 +9,7 @@ from typing import Optional
 
 from data_generator import TestDataGenerator
 from llm_factory import LLMFactory
-from selenium_llm_parser import parse_selenium_script
-from selenium_extractor import preprocess_selenium_script
+from utils.locator_parser import LocatorParser
 from models import (
     GenerateRequest,
     GenerateResponse,
@@ -122,12 +121,12 @@ async def generate_from_selenium(request: SeleniumGenerateRequest):
 
         # Step 1: Preprocess the Selenium script
         print("Preprocessing Selenium script...")
-        preprocessed_text = preprocess_selenium_script(script_text)
+        preprocessed_text = LocatorParser.preprocess_selenium_script(script_text)
         print(f"Preprocessed text length: {len(preprocessed_text)} chars")
 
         # Step 2: Parse the script to extract schema
         try:
-            parsed_schema, parse_error = parse_selenium_script(
+            parsed_schema, parse_error = LocatorParser.parse_selenium_script(
                 preprocessed_text,
                 provider=request.model_provider.value,
             )
