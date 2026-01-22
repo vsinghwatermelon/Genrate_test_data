@@ -184,6 +184,12 @@
     display: flex;
     flex-direction: column;
     gap: 15px;
+    max-height: 500px;
+    overflow-y: auto;
+    padding: 15px;
+    background: #fafafa;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
 }
 
 .action-item {
@@ -205,6 +211,79 @@
 
 .input-item {
     border-left-color: #27ae60;
+}
+
+/* API Interception Styles */
+.api-item {
+    border-left-color: #9b59b6;
+}
+
+.action-url {
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: #2c3e50;
+    max-width: 400px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.method-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    color: white;
+    text-transform: uppercase;
+    display: inline-block;
+    min-width: 40px;
+    text-align: center;
+}
+
+.method-get {
+    background: #3498db;
+}
+
+.method-post {
+    background: #27ae60;
+}
+
+.method-put {
+    background: #f39c12;
+}
+
+.method-delete {
+    background: #e74c3c;
+}
+
+.method-patch {
+    background: #8e44ad;
+}
+
+.status-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    color: white;
+}
+
+.status-2xx {
+    background: #27ae60;
+}
+
+.status-3xx {
+    background: #3498db;
+}
+
+.status-4xx {
+    background: #f39c12;
+}
+
+.status-5xx {
+    background: #e74c3c;
 }
 
 /* Screenshot Gallery */

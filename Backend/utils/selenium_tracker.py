@@ -32,6 +32,55 @@ class SeleniumActionTracker:
         self.filled_fields = []
         self.actions_log = []
         self.screenshots = []
+        self.api_calls = []
+    
+    def track_api_call(self, url: str, method: str, payload: Any, headers: Dict[str, str], response_code: int = None, response_body: Any = None):
+        """
+        Track an intercepted API call (Fetch/XHR)
+        """
+        api_info = {
+            "action": "api_call",
+            "url": url,
+            "method": method,
+            "payload": payload,
+            "headers": headers,
+            "response_code": response_code,
+            "response_body": response_body
+        }
+        self.api_calls.append(api_info)
+        self.actions_log.append(api_info)
+        
+        # Log to console
+        print(f"[API] {method} {url}")
+        if payload:
+            # Try to format payload if it's JSON
+            try:
+                if isinstance(payload, bytes):
+                    payload_str = payload.decode('utf-8')
+                    try:
+                        p_json = json.loads(payload_str)
+                        print(f"      Payload: {json.dumps(p_json, indent=2)}")
+                    except:
+                        print(f"      Payload: {payload_str[:500]}")
+                else:
+                    print(f"      Payload: {str(payload)[:500]}")
+            except:
+                pass
+        
+        if response_body:
+            # Try to format response if it's JSON
+            try:
+                if isinstance(response_body, bytes):
+                    response_str = response_body.decode('utf-8')
+                    try:
+                        r_json = json.loads(response_str)
+                        print(f"      Response: {json.dumps(r_json, indent=2)[:500]}")
+                    except:
+                        print(f"      Response: {response_str[:500]}")
+                else:
+                    print(f"      Response: {str(response_body)[:500]}")
+            except:
+                pass
     
     def _extract_element_info(self, element: WebElement, locator: str, action: str, description: str = "") -> Dict[str, Any]:
         """
@@ -527,6 +576,7 @@ class SeleniumActionTracker:
             "filled_fields": self.filled_fields,
             "actions_log": self.actions_log,
             "screenshots": self.screenshots,
+            "api_calls": self.api_calls,
             "verifications": [a for a in self.actions_log if a.get('action') == 'verify'],
             "text_retrievals": [a for a in self.actions_log if a.get('action') == 'get_text'],
             "summary": {
@@ -534,6 +584,7 @@ class SeleniumActionTracker:
                 "total_inputs": len(self.filled_fields),
                 "total_verifications": len([a for a in self.actions_log if a.get('action') == 'verify']),
                 "total_text_retrievals": len([a for a in self.actions_log if a.get('action') == 'get_text']),
+                "total_api_calls": len(self.api_calls),
                 "total_actions": len(self.actions_log)
             }
         }
@@ -547,6 +598,7 @@ class SeleniumActionTracker:
         print(f"\nTotal Actions: {len(self.actions_log)}")
         print(f"  - Clicks: {len(self.clicked_elements)}")
         print(f"  - Field Inputs: {len(self.filled_fields)}")
+        print(f"  - API Calls Intercepted: {len(self.api_calls)}")
         
         if self.clicked_elements:
             print("\n" + "-"*80)
@@ -622,6 +674,24 @@ class SeleniumActionTracker:
                     if len(field['dropdown_options']) > 10:
                         print(f"      ... and {len(field['dropdown_options']) - 10} more")
         
+        if self.api_calls:
+            print("\n" + "-"*80)
+            print("INTERCEPTED API CALLS (FETCH/XHR):")
+            print("-"*80)
+            for idx, call in enumerate(self.api_calls, 1):
+                print(f"\n{idx}. [{call['method']}] {call['url']}")
+                if call.get('response_code'):
+                    print(f"   Status: {call['response_code']}")
+                if call.get('payload'):
+                    try:
+                        if isinstance(call['payload'], bytes):
+                            p_str = call['payload'].decode('utf-8')
+                        else:
+                            p_str = str(call['payload'])
+                        print(f"   Payload: {p_str[:200]}{'...' if len(p_str) > 200 else ''}")
+                    except:
+                        pass
+
         print("\n" + "="*80 + "\n")
 
 

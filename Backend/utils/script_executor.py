@@ -210,7 +210,10 @@ class WebDriverProxy:
         return repr(self._driver)
 
     def quit(self):
-        return self._driver.quit()
+        # Defer quit to the executor's cleanup phase
+        # This allows us to collect logs/requests after the script "finishes"
+        logger.info("Script requested driver.quit() - deferred to cleanup phase")
+        pass
 
     def close(self):
         return self._driver.close()
@@ -507,19 +510,20 @@ class SeleniumScriptExecutor:
         return selenium_locators
     
     @staticmethod
-    def setup_driver(headless: bool = True) -> webdriver.Chrome:
+    def setup_driver(headless: bool = True, use_wire: bool = False) -> webdriver.Chrome:
         """
         Setup Chrome WebDriver with options.
         This method is now simplified to instantiate SeleniumHelper and return its driver.
         
         Args:
             headless: Whether to run browser in headless mode
+            use_wire: Whether to use selenium-wire for request interception
             
         Returns:
             Configured Chrome WebDriver instance
         """
         try:
-            driver = create_chrome_driver(headless=headless)
+            driver = create_chrome_driver(headless=headless, use_wire=use_wire)
             
             # Wrapper for driver to fix common script issues
             original_implicitly_wait = driver.implicitly_wait
@@ -555,7 +559,8 @@ class SeleniumScriptExecutor:
         script_path: str,
         locator_files: list,
         folder_path: str,
-        headless: bool = True
+        headless: bool = True,
+        use_wire: bool = False
     ) -> Dict[str, Any]:
         """
         Execute a Selenium script and track all actions
@@ -565,6 +570,7 @@ class SeleniumScriptExecutor:
             locator_files: List of paths to locator configuration files
             folder_path: Path to the folder containing the script
             headless: Whether to run browser in headless mode
+            use_wire: Whether to use selenium-wire for request interception
             
         Returns:
             Dictionary with tracked actions and results
@@ -610,8 +616,8 @@ class SeleniumScriptExecutor:
             print(f"[STEP 1] ✓ Total unique locators loaded: {len(locators_dict)}")
             
             # Step 2: Setup WebDriver
-            print(f"\n[STEP 2] Setting up Chrome WebDriver (headless={headless})...")
-            driver = SeleniumScriptExecutor.setup_driver(headless=headless)
+            print(f"\n[STEP 2] Setting up Chrome WebDriver (headless={headless}, wire={use_wire})...")
+            driver = SeleniumScriptExecutor.setup_driver(headless=headless, use_wire=use_wire)
             print("[STEP 2] ✓ WebDriver ready")
             
             # Step 3: Load script
@@ -675,6 +681,7 @@ class SeleniumScriptExecutor:
             
             # Function to return our proxy driver instead of a new one
             def mock_driver_factory(*a, **k):
+                print(f"[DEBUG] Mock driver factory called! Returning proxy driver.")
                 return proxy_driver
             
             selenium.webdriver.Chrome = mock_driver_factory
@@ -732,6 +739,57 @@ class SeleniumScriptExecutor:
                 import traceback
                 traceback.print_exc()
             
+            # Step 5.5: Collect API calls if using selenium-wire
+            if use_wire:
+                if hasattr(driver, 'requests'):
+                    print(f"\n[STEP 5.5] Processing intercepted API calls (Fetch/XHR)...")
+                    print(f"  → Total requests in storage: {len(driver.requests)}")
+                    
+                    for request in driver.requests:
+                        if request.response:
+                            content_type = request.response.headers.get('Content-Type', '').lower()
+                            fetch_mode = request.headers.get('Sec-Fetch-Mode', '')
+                            xhr = request.headers.get('X-Requested-With', '')
+                            
+                            # STRICT FILTERING: Capture only Fetch/XHR requests as requested
+                            # logic based on standard headers for API calls
+                            
+                            should_capture = False
+                            
+                            # 1. Check X-Requested-With (Standard for AJAX)
+                            if request.headers.get('X-Requested-With', '').lower() == 'xmlhttprequest':
+                                should_capture = True
+                                
+                            # 2. Check Sec-Fetch-Dest (empty usually implies fetch/XHR, distinct from 'document', 'image', etc.)
+                            elif request.headers.get('Sec-Fetch-Dest', '').lower() == 'empty':
+                                should_capture = True
+                                
+                            # 3. Check for JSON Content-Type (Strong indicator of API data)
+                            elif 'application/json' in content_type:
+                                should_capture = True
+
+                            if should_capture:
+                                 # Capture response body if available
+                                 response_body = None
+                                 try:
+                                     if request.response and request.response.body:
+                                         response_body = request.response.body
+                                 except:
+                                     pass
+                                 
+                                 tracker.track_api_call(
+                                     url=request.url,
+                                     method=request.method,
+                                     payload=request.body,
+                                     headers=dict(request.headers),
+                                     response_code=request.response.status_code,
+                                     response_body=response_body
+                                 )
+                    
+                    print(f"[STEP 5.5] ✓ Processed {len(tracker.api_calls)} API calls")
+                else:
+                     print(f"[WARN] use_wire=True but driver has no 'requests' attribute. Selenium-wire might not be active.")
+
             # Step 6: Restore original modules to sys.modules
             for mod_name, mod_obj in original_modules.items():
                 sys.modules[mod_name] = mod_obj
@@ -801,7 +859,8 @@ class SeleniumScriptExecutor:
     @staticmethod
     def execute_from_zip(
         zip_path: str,
-        headless: bool = True
+        headless: bool = True,
+        use_wire: bool = False
     ) -> Dict[str, Any]:
         """
         Extract zip file and execute the Selenium script inside
@@ -809,6 +868,7 @@ class SeleniumScriptExecutor:
         Args:
             zip_path: Path to zip file containing Selenium script
             headless: Whether to run browser in headless mode
+            use_wire: Whether to use selenium-wire for request interception
             
         Returns:
             Dictionary with tracked actions and results
@@ -839,5 +899,6 @@ class SeleniumScriptExecutor:
                 script_path=main_script,
                 locator_files=locator_files,
                 folder_path=tmpdir,
-                headless=headless
+                headless=headless,
+                use_wire=use_wire
             )

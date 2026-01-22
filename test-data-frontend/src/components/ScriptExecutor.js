@@ -13,6 +13,7 @@ function ScriptExecutor({ onSchemaGenerated }) {
     const [error, setError] = useState('');
     const [executionResult, setExecutionResult] = useState(null);
     const [headless, setHeadless] = useState(true);
+    const [useWire, setUseWire] = useState(false);
     const [parsedSchema, setParsedSchema] = useState(null);
     const [parsing, setParsing] = useState(false);
     const fileInputRef = useRef();
@@ -96,6 +97,7 @@ function ScriptExecutor({ onSchemaGenerated }) {
             const formData = new FormData();
             formData.append('file', zipBlob, 'script_folder.zip');
             formData.append('headless', headless.toString());
+            formData.append('use_wire', useWire.toString());
 
             console.log('Sending request to backend...');
             const response = await fetch('http://localhost:8000/execute-selenium-script', {
@@ -313,6 +315,14 @@ function ScriptExecutor({ onSchemaGenerated }) {
                         />
                         Run in headless mode (no browser window)
                     </label>
+                    <label className="checkbox-label" style={{ marginLeft: '20px' }}>
+                        <input
+                            type="checkbox"
+                            checked={useWire}
+                            onChange={(e) => setUseWire(e.target.checked)}
+                        />
+                        Intercept API Calls (Fetch/XHR)
+                    </label>
                 </div>
 
                 <div className="action-buttons">
@@ -374,6 +384,12 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                         {executionResult.tracked_actions.summary?.total_inputs || 0}
                                     </div>
                                     <div className="card-label">Field Inputs</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="card-value">
+                                        {executionResult.tracked_actions.summary?.total_api_calls || 0}
+                                    </div>
+                                    <div className="card-label">API Calls</div>
                                 </div>
                             </div>
 
@@ -745,6 +761,53 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                                             <div className="detail-row">
                                                                 <span className="detail-label">enabled:</span>
                                                                 <span className="detail-value">{String(field.state.is_enabled)}</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {executionResult.tracked_actions.api_calls?.length > 0 && (
+                                <div className="actions-section">
+                                    <h4>🌐 Intercepted API Calls</h4>
+                                    <div className="actions-list">
+                                        {executionResult.tracked_actions.api_calls.map((call, idx) => (
+                                            <div key={idx} className="action-item api-item">
+                                                <div className="action-header">
+                                                    <span className="action-number">#{idx + 1}</span>
+                                                    <span className={`method-badge method-${call.method.toLowerCase()}`}>{call.method}</span>
+                                                    <span className="action-url" title={call.url}>{call.url}</span>
+                                                    {call.response_code && (
+                                                        <span className={`status-badge status-${String(call.response_code)[0]}xx`}>
+                                                            {call.response_code}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="action-details">
+                                                    {call.payload && (
+                                                        <div className="detail-section">
+                                                            <div className="detail-section-title">📦 Payload</div>
+                                                            <div className="detail-row code-row">
+                                                                <pre className="detail-code">
+                                                                    {typeof call.payload === 'object'
+                                                                        ? JSON.stringify(call.payload, null, 2)
+                                                                        : String(call.payload).substring(0, 500) + (String(call.payload).length > 500 ? '...' : '')}
+                                                                </pre>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {call.response_body && (
+                                                        <div className="detail-section">
+                                                            <div className="detail-section-title">📥 Response</div>
+                                                            <div className="detail-row code-row">
+                                                                <pre className="detail-code">
+                                                                    {typeof call.response_body === 'object'
+                                                                        ? JSON.stringify(call.response_body, null, 2)
+                                                                        : String(call.response_body).substring(0, 500) + (String(call.response_body).length > 500 ? '...' : '')}
+                                                                </pre>
                                                             </div>
                                                         </div>
                                                     )}

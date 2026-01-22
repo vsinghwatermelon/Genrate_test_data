@@ -45,8 +45,9 @@ async def execute_selenium_script(
             # Get parameters from form data
             form_data = await request.form()
             headless = form_data.get('headless', 'true').lower() == 'true'
+            use_wire = form_data.get('use_wire', 'false').lower() == 'true'
             
-            logger.info(f"Received script execution request (headless={headless})")
+            logger.info(f"Received script execution request (headless={headless}, use_wire={use_wire})")
             
             # Step 1: Save uploaded file
             print("\n[STEP 1] Saving uploaded file...")
@@ -66,7 +67,8 @@ async def execute_selenium_script(
             print("\n[STEP 2] Executing script...")
             result = SeleniumScriptExecutor.execute_from_zip(
                 zip_path=zip_path,
-                headless=headless
+                headless=headless,
+                use_wire=use_wire
             )
             
             if not result.get('success'):
@@ -79,11 +81,61 @@ async def execute_selenium_script(
             print("\n[ENDPOINT] ✓ Script execution completed successfully")
             print("="*80 + "\n")
             
+            # Helper to sanitize non-JSON-serializable data (like bytes from selenium-wire)
+            def make_json_serializable(obj):
+                if isinstance(obj, bytes):
+                    # Try to decompress if it's gzip-compressed
+                    import gzip
+                    import base64
+                    
+                    # Strategy 1: Check if gzip-compressed (starts with magic bytes 0x1f 0x8b)
+                    if len(obj) > 2 and obj[0:2] == b'\x1f\x8b':
+                        try:
+                            obj = gzip.decompress(obj)
+                        except:
+                            pass
+                    
+                    # Strategy 2: UTF-8 decoding (most common for JSON APIs)
+                    try:
+                        decoded = obj.decode('utf-8')
+                        # If it looks like JSON, try to parse and return the object
+                        if decoded.strip().startswith(('{', '[')):
+                            try:
+                                return json.loads(decoded)
+                            except:
+                                pass
+                        return decoded
+                    except UnicodeDecodeError:
+                        pass
+                    
+                    # Strategy 3: Latin-1 (handles all byte values but might give garbled text)
+                    # We'll skip this for now since it produces garbled output
+                    
+                    # Strategy 4: For binary data, represent as base64
+                    try:
+                        return f"[Binary data - Base64: {base64.b64encode(obj).decode('ascii')[:200]}...]"
+                    except:
+                        return f"<bytes: {len(obj)}>"
+                        
+                elif isinstance(obj, dict):
+                    return {k: make_json_serializable(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [make_json_serializable(i) for i in obj]
+                elif isinstance(obj, tuple):
+                    return tuple(make_json_serializable(i) for i in obj)
+                elif isinstance(obj, set):
+                    return [make_json_serializable(i) for i in obj]
+                else:
+                    return obj
+
+            # Clean the result before identifying it as JSON
+            cleaned_result = make_json_serializable(result)
+
             # Return tracked actions
             return JSONResponse(content={
                 "success": True,
                 "message": "Script executed successfully",
-                "data": result
+                "data": cleaned_result
             })
             
         except HTTPException:
