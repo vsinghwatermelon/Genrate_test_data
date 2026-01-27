@@ -1,9 +1,11 @@
 """
-Endpoint logging utility with log accumulation.
+Endpoint Multi-Channel Logging Utility
 
-Provides structured logging with automatic log collection for API responses.
-Useful for endpoints that need to return detailed execution logs to the client.
+Enhances standard Python logging with in-memory log accumulation. 
+This allows endpoints to return detailed execution logs to the frontend 
+while concurrently maintaining standard server-side log files.
 """
+
 import logging
 from typing import List
 from datetime import datetime
@@ -11,96 +13,80 @@ from datetime import datetime
 
 class EndpointLogger:
     """
-    Logger that accumulates messages for endpoint responses.
+    Stateful logger that collects messages for inclusion in API responses.
     
-    Combines standard Python logging with message accumulation, allowing
-    endpoints to return detailed execution logs to the client while also
-    maintaining proper server-side logging.
+    Combines the permanence of standard logging with the accessibility of 
+    a per-request log buffer. This is essential for long-running operations
+    where the user needs visibility into the current execution stage.
     
     Attributes:
-        endpoint_name: Name of the endpoint (used in logger name)
-        logs: List of accumulated log messages
-        logger: Standard Python logger instance
-        start_time: Timestamp when logger was created
-    
-    Example:
-        >>> logger = EndpointLogger("field_extraction")
-        >>> logger.info("Processing started")
-        >>> logger.info("Found 10 fields")
-        >>> logger.error("Failed to parse field 5")
-        >>> return {"logs": logger.get_logs(), "status": "complete"}
+        endpoint_name: Identifier used for the Python logger and metadata.
+        logs: Ordered list of accumulated log strings.
+        logger: Underlying standard logging.Logger instance.
+        start_time: High-precision timestamp captured at initialization.
     """
     
     def __init__(self, endpoint_name: str):
         """
-        Initialize endpoint logger.
+        Initialize a new logging session for an endpoint.
         
         Args:
-            endpoint_name: Name of the endpoint (e.g., "field_extraction")
+            endpoint_name: Descriptive name for the API channel (e.g., "script_execution").
         """
         self.endpoint_name = endpoint_name
         self.logs: List[str] = []
         self.logger = logging.getLogger(f"endpoints.{endpoint_name}")
         self.start_time = datetime.now()
     
+
+    # ============================================================================
+    # LOGGING METHODS
+    # ============================================================================
+
     def info(self, msg: str) -> None:
         """
-        Log info message.
-        
-        Args:
-            msg: Message to log
+        Record and broadcast an informational message.
         """
         self.logger.info(msg)
         self.logs.append(f"[INFO] {msg}")
     
     def error(self, msg: str, exc_info: bool = False) -> None:
         """
-        Log error message.
-        
-        Args:
-            msg: Message to log
-            exc_info: Whether to include exception traceback
+        Record a failure event with optional traceback detail.
         """
         self.logger.error(msg, exc_info=exc_info)
         self.logs.append(f"[ERROR] {msg}")
     
     def warning(self, msg: str) -> None:
         """
-        Log warning message.
-        
-        Args:
-            msg: Message to log
+        Record a non-critical warning that may affect the result quality.
         """
         self.logger.warning(msg)
         self.logs.append(f"[WARN] {msg}")
     
     def debug(self, msg: str) -> None:
         """
-        Log debug message (not added to logs list).
+        Record low-level debugging data. 
         
-        Debug messages are logged to the server but not included in
-        the accumulated logs returned to the client.
-        
-        Args:
-            msg: Message to log
+        Note: Debug messages are logged to the server logs but are 
+        EXCLUDED from the final logs list returned to the user.
         """
         self.logger.debug(msg)
     
+
+    # ============================================================================
+    # STATE RETRIEVAL
+    # ============================================================================
+
     def get_logs(self) -> List[str]:
         """
-        Get accumulated logs with execution time.
-        
-        Returns:
-            List of log messages including final completion time
+        Retrieve all accumulated messages, finalized with a duration summary.
         """
-        duration = (datetime.now() - self.start_time).total_seconds()
+        duration = self.get_duration()
         return self.logs + [f"[COMPLETE] Total execution time: {duration:.2f}s"]
     
     def get_duration(self) -> float:
         """
-        Get execution duration in seconds.
-        
-        Returns:
-            Duration since logger was created
+        Calculate total execution time since this logger was instantiated.
         """
         return (datetime.now() - self.start_time).total_seconds()

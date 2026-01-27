@@ -186,13 +186,65 @@ def patch_helper_class(cls, locators_dict=None):
     # Apply element interaction patches
     _patch_click(cls)
     _patch_send_keys(cls)
+    _patch_select(cls)
     _patch_hover(cls)
     _patch_verify(cls)
     _patch_get_text(cls)
     _patch_wait_for_element(cls)
     
+    # Catch any dynamic variants (click_if_present, click_and_wait, etc.)
+    _patch_dynamic_variants(cls)
+    
     # Inject Selenium exceptions into helper's module to prevent NameErrors
     _inject_selenium_exceptions(cls)
+
+
+def _patch_dynamic_variants(cls):
+    """
+    Dynamically discover and patch all interaction helper methods.
+    Catches variations like click_if_present, click_and_wait, input_text, etc.
+    """
+    prefixes = ['click_', 'input_', 'send_keys_', 'hover_', 'verify_', 'get_text_', 'select_']
+    
+    for name in dir(cls):
+        # Only patch methods with interaction prefixes that haven't been patched yet
+        if any(name.startswith(p) for p in prefixes) and not name.startswith('_'):
+            original = getattr(cls, name)
+            if not callable(original) or hasattr(original, '_is_patched'):
+                continue
+            
+            # Skip standard methods we already patch
+            if name in ['click', 'send_keys', 'select', 'hover', 'is_verify', 'get_text']:
+                continue
+                
+            def make_wrapper(orig_name, orig_func):
+                base_type = next((p[:-1] for p in prefixes if orig_name.startswith(p)), "action")
+                
+                def robust_dynamic(self, locator_id, *args, **kwargs):
+                    """Dynamic variant wrapper with tracking."""
+                    print(f"[{orig_name.upper()}] {locator_id}")
+                    try:
+                        # Check element existence (non-blocking wait)
+                        element = self.wait_for_element(locator_id, timeout=0.1)
+                        if element is None:
+                            print(f"[{orig_name.upper()}] ✗ Skipped: Element '{locator_id}' not found")
+                            tracker = getattr(self.driver, '_tracker', None)
+                            if tracker:
+                                tracker.track_skip(locator_id, base_type, reason=f"Helper '{orig_name}' called but element missing")
+                            return None
+                        
+                        # Call the original custom method
+                        return orig_func(self, locator_id, *args, **kwargs)
+                    except Exception as e:
+                        # Only log if it's not a standard Selenium error we handle in wait
+                        print(f"[{orig_name.upper()}] ✗ Error: {e}")
+                        raise
+                
+                robust_dynamic._is_patched = True
+                return robust_dynamic
+                
+            setattr(cls, name, make_wrapper(name, original))
+            logger.info(f"Dynamically patched auxiliary interaction method: {cls.__name__}.{name}")
 
 
 def _inject_locators(cls, locators_dict):
@@ -212,20 +264,18 @@ def _inject_locators(cls, locators_dict):
 
 def _inject_selenium_exceptions(cls):
     """
-    Add Selenium exception classes to the helper's module.
+    Add Selenium exception classes to the helper's module and builtins.
     
     User scripts often reference exceptions like NoSuchElementException without
-    importing them. This prevents NameError by adding them to the module namespace.
+    importing them. This prevents NameError by adding them to the module namespace
+    and Python's builtins for global availability.
     """
     try:
         from selenium.common.exceptions import (
             NoSuchElementException, TimeoutException, StaleElementReferenceException,
             ElementClickInterceptedException, ElementNotInteractableException, WebDriverException
         )
-        
-        module = sys.modules.get(cls.__module__)
-        if not module:
-            return
+        import builtins
         
         exceptions = {
             'NoSuchElementException': NoSuchElementException,
@@ -236,9 +286,18 @@ def _inject_selenium_exceptions(cls):
             'WebDriverException': WebDriverException
         }
         
+        # 1. Inject into the helper class's module
+        module = sys.modules.get(cls.__module__)
+        if module:
+            for name, exception_class in exceptions.items():
+                if not hasattr(module, name):
+                    setattr(module, name, exception_class)
+        
+        # 2. Inject into Python's builtins for absolute global availability
         for name, exception_class in exceptions.items():
-            if not hasattr(module, name):
-                setattr(module, name, exception_class)
+            if not hasattr(builtins, name):
+                setattr(builtins, name, exception_class)
+                
     except ImportError:
         pass
 
@@ -261,66 +320,43 @@ def _patch_switch_tab(cls):
         return
     
     def robust_switch_tab(self, tab_title):
-        """Switch to tab with fuzzy matching and retries."""
+        """Switch tab with fuzzy matching and auto-correction."""
         print(f"[TAB SWITCH] Looking for: '{tab_title}'")
         
-        for attempt in range(4):  # 4 attempts with increasing wait
-            # First try: use original method
-            if attempt == 0:
+        # 1. Fuzzy match against all open handles
+        handles = self.driver.window_handles
+        for handle in handles:
+            try:
+                self.driver.switch_to.window(handle)
+                if tab_title.lower() in self.driver.title.lower() or \
+                   tab_title.lower() in self.driver.current_url.lower():
+                    print(f"[TAB SWITCH] ✓ Matched: '{self.driver.title}'")
+                    return True
+            except Exception:
+                continue
+        
+        # 2. Auto-correction: If only 1 tab exists, just use it
+        if len(handles) == 1:
+            try:
+                self.driver.switch_to.window(handles[0])
+                print(f"[TAB SWITCH] ⚠️ Titles mismatched but only 1 tab exists. Auto-switched to: '{self.driver.title}'")
+                return True
+            except Exception:
+                pass
+            
+        # 3. Aggressive retry loop for dynamic titles
+        for attempt in range(1, 4):
+            print(f"[TAB SWITCH] Attempt {attempt}: Fuzzy matching...")
+            time.sleep(1.5)
+            # Re-check updated handles
+            for handle in self.driver.window_handles:
                 try:
-                    result = original(self, tab_title)
-                    if result:
+                    self.driver.switch_to.window(handle)
+                    if tab_title.lower() in self.driver.title.lower():
+                        print(f"[TAB SWITCH] ✓ Matched: '{self.driver.title}'")
                         return True
                 except Exception:
-                    pass
-            
-            # Fuzzy matching attempts
-            print(f"[TAB SWITCH] Attempt {attempt + 1}: Fuzzy matching...")
-            
-            try:
-                handles = self.driver.window_handles
-                
-                # Wait for new tabs to appear (common when clicking links)
-                if len(handles) < 2 and attempt < 2:
-                    time.sleep(1.5)
-                    handles = self.driver.window_handles
-                
-                available_tabs = []
-                
-                for handle in handles:
-                    try:
-                        self.driver.switch_to.window(handle)
-                        title = self.driver.title
-                        url = self.driver.current_url
-                        available_tabs.append(f"'{title}' ({url})")
-                        
-                        # Match 1: Exact or substring match (case-insensitive)
-                        if (tab_title.lower() in title.lower() or 
-                            title.lower() in tab_title.lower() or
-                            tab_title.lower() in url.lower() or
-                            url.lower() in tab_title.lower()):
-                            print(f"[TAB SWITCH] ✓ Matched: '{title}'")
-                            return True
-                        
-                        # Match 2: Keyword matching (for partial domains)
-                        # e.g., 'app.turtlemint.com' matches 'app.turtlemintinsurance.com'
-                        keywords = [p for p in re.split(r'[^a-zA-Z0-9]', tab_title.lower()) if len(p) > 5]
-                        if keywords and any(kw in url.lower() or k in title.lower() for kw in keywords):
-                            print(f"[TAB SWITCH] ✓ Keyword match: '{title}'")
-                            return True
-                    except Exception:
-                        continue
-                
-                # Show available tabs on final attempt
-                if attempt == 3:
-                    print(f"[TAB SWITCH] ✗ No match found")
-                    print(f"[TAB SWITCH] Available tabs: {available_tabs}")
-            except Exception as e:
-                logger.debug(f"Tab switch attempt failed: {e}")
-            
-            # Wait before next attempt (exponential backoff)
-            if attempt < 3:
-                time.sleep(1.5)
+                    continue
         
         print(f"[TAB SWITCH] ✗ Failed after 4 attempts for '{tab_title}'")
         return False
@@ -332,6 +368,39 @@ def _patch_switch_tab(cls):
 # ============================================================================
 # SECTION 4: Element Interaction Patches
 # ============================================================================
+
+def _patch_select(cls):
+    """Add tracking and robustness to select (dropdown) method."""
+    original = getattr(cls, 'select', None)
+    if not original or hasattr(original, '_is_patched'):
+        return
+    
+    def robust_select(self, locator_id, value):
+        """Select with tracking."""
+        print(f"[SELECT] {locator_id} = '{value}'")
+        try:
+            element = self.wait_for_element(locator_id)
+            if element is None:
+                print(f"[SELECT] ✗ Skipped: Element '{locator_id}' not found")
+                tracker = getattr(self.driver, '_tracker', None)
+                if tracker: tracker.track_skip(locator_id, "select")
+                return None
+                
+            result = original(self, locator_id, value)
+            
+            # Track as input
+            tracker = getattr(self.driver, '_tracker', None)
+            if tracker:
+                tracker.track_field_input(element, locator_id, value)
+            
+            return result
+        except Exception as e:
+            print(f"[SELECT] ✗ Failed for '{locator_id}': {e}")
+            raise
+            
+    robust_select._is_patched = True
+    cls.select = robust_select
+
 
 def _patch_click(cls):
     """
@@ -348,6 +417,14 @@ def _patch_click(cls):
         """Click with logging."""
         print(f"[CLICK] {locator_id}")
         try:
+            # Check if element exists before calling original
+            element = self.wait_for_element(locator_id, timeout=0.1)
+            if element is None:
+                print(f"[CLICK] ✗ Skipped: Element '{locator_id}' not found")
+                tracker = getattr(self.driver, '_tracker', None)
+                if tracker: tracker.track_skip(locator_id, "click")
+                return None
+            
             return original(self, locator_id, *args, **kwargs)
         except Exception as e:
             print(f"[CLICK] ✗ Failed for '{locator_id}': {e}")
@@ -367,6 +444,13 @@ def _patch_send_keys(cls):
         """Send keys with logging."""
         print(f"[INPUT] {locator_id} = '{text}'")
         try:
+            element = self.wait_for_element(locator_id, timeout=0.1)
+            if element is None:
+                print(f"[INPUT] ✗ Skipped: Element '{locator_id}' not found")
+                tracker = getattr(self.driver, '_tracker', None)
+                if tracker: tracker.track_skip(locator_id, "input")
+                return None
+                
             return original(self, locator_id, text, *args, **kwargs)
         except Exception as e:
             print(f"[INPUT] ✗ Failed for '{locator_id}': {e}")
@@ -387,6 +471,12 @@ def _patch_hover(cls):
         print(f"[HOVER] {locator_id}")
         try:
             element = self.wait_for_element(locator_id)
+            if element is None:
+                print(f"[HOVER] ✗ Skipped: Element '{locator_id}' not found")
+                tracker = getattr(self.driver, '_tracker', None)
+                if tracker: tracker.track_skip(locator_id, "hover")
+                return None
+                
             result = original(self, locator_id)
             
             # Track hover action if tracker is available
@@ -414,6 +504,14 @@ def _patch_verify(cls):
         print(f"[VERIFY] {locator_id} contains '{text}'")
         try:
             element = self.wait_for_element(locator_id)
+            if element is None:
+                print(f"[VERIFY] ✗ Failed: Element '{locator_id}' not found")
+                # Track failed verification even if element missing
+                tracker = getattr(self.driver, '_tracker', None)
+                if tracker:
+                    tracker.track_verification(None, locator_id, text, "ELEMENT NOT FOUND", False)
+                return False
+
             result = original(self, locator_id, text=text, **kwargs)
             
             tracker = getattr(self.driver, '_tracker', None)
@@ -471,24 +569,40 @@ def _patch_wait_for_element(cls):
         return
     
     def robust_wait(self, locator_id, timeout=None):
-        """Wait with descriptive error messages."""
+        """Wait with descriptive error messages and exception safety."""
         # Call original wait
-        element = original(self, locator_id, timeout) if timeout is not None else original(self, locator_id)
+        try:
+            element = original(self, locator_id, timeout) if timeout is not None else original(self, locator_id)
+        except Exception as e:
+            # Silence selenium errors
+            element = None
         
         if element is None:
-            # Check if locator exists in configuration
+            # Multi-layer locator lookup
+            locator_info = None
+            
+            # 1. Try instance methods
             if hasattr(self, 'get_locator_info'):
                 locator_info = self.get_locator_info(locator_id)
-                if not locator_info:
-                    raise Exception(
-                        f"CRITICAL: Locator '{locator_id}' not found in config files. "
-                        f"Check your locators_config.py or keys_config.py"
-                    )
             
-            raise Exception(
-                f"CRITICAL: Element '{locator_id}' not found on page within timeout. "
-                f"The locator exists in config but element is not present on the page."
-            )
+            # 2. Try instance/class dictionary fallback
+            if not locator_info:
+                locs = getattr(self, 'locators', {}) or getattr(self.__class__, 'locators', {})
+                if isinstance(locs, dict):
+                    locator_info = locs.get(locator_id)
+                
+            # 3. Try global driver fallback (injected by executor.py)
+            if not locator_info and hasattr(self, 'driver'):
+                locator_info = getattr(self.driver, '_locators', {}).get(locator_id)
+            elif not locator_info and hasattr(self, '_driver'): # Proxy style
+                locator_info = getattr(self._driver, '_locators', {}).get(locator_id)
+                
+            if not locator_info:
+                print(f"[WAIT] ⚠️ Warning: Locator '{locator_id}' not found in any config files!")
+            else:
+                print(f"[WAIT] ⚠️ Warning: Element '{locator_id}' not found on page within timeout.")
+                
+            return None # Return None to support 'if element:' logic in user scripts
         
         return element
     

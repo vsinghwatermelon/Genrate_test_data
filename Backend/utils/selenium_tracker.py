@@ -1,928 +1,337 @@
 """
-Selenium Action Tracker
+Selenium Interaction Tracker
 
-Utility to wrap Selenium actions and track clicked buttons and filled fields
-during script execution. Logs all interactions to the console and returns
-structured data about the interactions.
+A high-fidelity monitoring agent that wraps Selenium actions to record clicks, 
+form interactions, and intercepted API calls. Provides a structured narrative 
+of the user flow for schema synthesis and test data generation.
 """
 
+import time
 import logging
 import base64
-import time
-from typing import List, Dict, Any
+from typing import Dict, Any, List, Optional
+from datetime import datetime
 from selenium.webdriver.remote.webelement import WebElement
-try:
-    from .field_extractor import detect_field_type
-except ImportError:
-    try:
-        from utils.field_extractor import detect_field_type
-    except ImportError:
-        def detect_field_type(info): return info.get('type', 'string')
+
+# Centralized Logic Hub Imports
+from utils.element_extractor import extract_full_element_info
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# SECTION 1: INTERACTION TRACKER (KEEPS STATE)
+# ============================================================================
+
 class SeleniumActionTracker:
     """
-    Wrapper class that tracks all clicks and field interactions
-    during Selenium script execution.
+    Stateful monitor that intercepts and records all Selenium-driven interactions.
+    
+    Acts as the source of truth for 'what happened' during a script execution,
+    correlating UI interactions with resulting API side-effects.
     """
-    
-    def __init__(self, api_capture_window=3.0):
-        self.clicked_elements = []
-        self.filled_fields = []
-        self.actions_log = []
-        self.screenshots = []
-        self.api_calls = []
-        self.click_events = []  # Track click timestamps for API association
-        self.api_capture_window = api_capture_window  # Time window in seconds after click to capture APIs
-    
-    def track_api_call(self, url: str, method: str, payload: Any, headers: Dict[str, str], response_code: int = None, response_body: Any = None, triggered_by: str = None, time_after_click: float = None):
+
+    def __init__(self, api_capture_window: float = 3.0, all_locators: Dict = None):
         """
-        Track an intercepted API call (Fetch/XHR)
+        Initialize a tracking session.
         
         Args:
-            url: API endpoint URL
-            method: HTTP method (GET, POST, etc.)
-            payload: Request payload/body
-            headers: Request headers
-            response_code: HTTP response status code
-            response_body: Response body
-            triggered_by: Locator of the click that triggered this API (if applicable)
-            time_after_click: Time in seconds after the click when this API was called
+            api_capture_window: Seconds after a click to correlate API calls to that click.
+            all_locators: Full dictionary of discovered locators from scanning.
         """
-        api_info = {
-            "action": "api_call",
+        self.all_locators = all_locators or {}
+        self.clicked_elements: List[Dict[str, Any]] = [] # Internal use
+        self.filled_fields: List[Dict[str, Any]] = []    # Internal use
+        self.click_events: List[Dict[str, Any]] = []     # Data compatibility
+        self.fill_events: List[Dict[str, Any]] = []      # Data compatibility
+        self.action_log: List[Dict[str, Any]] = []
+        self.api_calls: List[Dict[str, Any]] = []
+        self.screenshots: List[Dict[str, str]] = []
+        self.skipped_actions: List[Dict[str, Any]] = []
+        self.page_inventory: List[Dict[str, Any]] = []
+        
+        self.start_time = datetime.now()
+        self.api_window = api_capture_window
+
+
+    def track_click(self, element: WebElement, locator: str, description: str = ""):
+        """Record a successful click and analyze the target element."""
+        timestamp = time.time()
+        logger.info(f"[TRACKER] Intercepted CLICK on: {locator}")
+        
+        # Utilize centralized analysis suite
+        info = extract_full_element_info(element, locator, "click", description)
+        info['timestamp'] = timestamp
+        
+        self.clicked_elements.append(info)
+        self.click_events.append(info)
+        self.action_log.append({
+            "type": "click",
+            "locator": locator,
+            "timestamp": timestamp,
+            "details": info
+        })
+
+
+    def track_field_input(self, element: WebElement, locator: str, value: str, description: str = ""):
+        """Record a field modification and analyze the interaction context."""
+        timestamp = time.time()
+        logger.info(f"[TRACKER] Intercepted INPUT on: {locator} -> '{value}'")
+        
+        info = extract_full_element_info(element, locator, "input", description)
+        info['value_entered'] = value
+        info['timestamp'] = timestamp
+        
+        self.filled_fields.append(info)
+        self.fill_events.append(info)
+        self.action_log.append({
+            "type": "input",
+            "locator": locator,
+            "value": value,
+            "timestamp": timestamp,
+            "details": info
+        })
+
+
+    def track_api_call(self, url: str, method: str, payload: Any, headers: Dict, **kwargs):
+        """Record an intercepted Fetch/XHR request."""
+        call_info = {
             "url": url,
             "method": method,
             "payload": payload,
             "headers": headers,
-            "response_code": response_code,
-            "response_body": response_body,
-            "triggered_by_click": triggered_by,
-            "time_after_click": time_after_click
+            "timestamp": time.time(),
+            **kwargs
         }
-        self.api_calls.append(api_info)
-        self.actions_log.append(api_info)
         
-        # Log to console with click association
-        if triggered_by:
-            print(f"[API] {method} {url}")
-            print(f"      ✓ Triggered by click: '{triggered_by}' ({time_after_click:.2f}s after click)")
-            if response_code:
-                print(f"      Status: {response_code}")
+        # Only attempt to find trigger if not already provided via kwargs
+        if 'triggered_by' not in call_info and 'triggered_by_click' not in call_info and 'trigger_details' not in call_info:
+            trigger = self.find_associated_click(call_info['timestamp'])
+            if trigger:
+                # Add full semantic context for rich frontend display
+                call_info['trigger_details'] = trigger
+                
+                # Use a specific priority for the grouping string
+                group_id = trigger.get('exact_purpose') or trigger.get('locator')
+                call_info['triggered_by'] = group_id
+                call_info['triggered_by_click'] = group_id
+                call_info['triggered_by_action'] = group_id
+                call_info['time_after_click'] = trigger.get('time_after_click')
         else:
-            print(f"[API] {method} {url}")
-            if response_code:
-                print(f"      Status: {response_code}")
-        
-        if payload:
-            # Try to format payload if it's JSON
-            try:
-                if isinstance(payload, bytes):
-                    payload_str = payload.decode('utf-8')
-                    try:
-                        p_json = json.loads(payload_str)
-                        print(f"      Payload: {json.dumps(p_json, indent=2)}")
-                    except:
-                        print(f"      Payload: {payload_str[:500]}")
-                else:
-                    print(f"      Payload: {str(payload)[:500]}")
-            except:
-                pass
-    
-    def _extract_element_info(self, element: WebElement, locator: str, action: str, description: str = "") -> Dict[str, Any]:
-        """
-        Extract comprehensive information from a WebElement
-        
-        Args:
-            element: The WebElement to extract info from
-            locator: The locator string used to find the element
-            action: The action type (click, input, etc.)
-            description: Optional description
+            # If trigger details were passed (likely from executor.py), ensure all keys exist
+            details = call_info.get('trigger_details') or {}
+            if details:
+                # Add compatibility keys for grouping and display
+                group_id = details.get('exact_purpose') or details.get('locator') or call_info.get('triggered_by')
+                call_info['triggered_by'] = group_id
+                call_info['triggered_by_click'] = group_id
+                call_info['triggered_by_action'] = group_id
+                if 'time_after_click' not in call_info and 'time_after_click' in details:
+                    call_info['time_after_click'] = details['time_after_click']
             
-        Returns:
-            Dictionary with comprehensive element information
-        """
-        try:
-            # Basic info gathered while we still have the element
-            tag_name = element.tag_name
-            text = element.text[:200] if element.text else ""
-            
-            info = {
-                "action": action,
-                "locator": locator,
-                "tag_name": tag_name,
-                "text": text,
-                "description": description,
-                "page_url": "",
-                "page_title": ""
-            }
-            
-            # Extract window info (URL, Title)
-            try:
-                info["page_url"] = element.parent.current_url
-                info["page_title"] = element.parent.title
-            except: pass
-            
-            # Use a consolidated JS block to extract EVERYTHING in one go
-            # This is much faster and more resistant to stale element errors
-            try:
-                # Unwrap if it's a TrackedWebElement
-                real_element = element
-                if hasattr(element, '_element'):
-                    real_element = element._element
-                
-                driver = real_element.parent
-                all_data = driver.execute_script("""
-                    var el = arguments[0];
-                    if (!el) return null;
-                    
-                    function getAttributes(e) {
-                        var attrs = {};
-                        var common = [
-                            "id", "name", "class", "type", "value", "placeholder", "href", 
-                            "src", "alt", "title", "aria-label", "aria-describedby", "aria-required",
-                            "role", "tabindex", "disabled", "readonly", "required", "maxlength",
-                            "minlength", "pattern", "autocomplete", "autofocus", "checked",
-                            "selected", "multiple", "accept", "min", "max", "step",
-                            "for", "form", "data-testid", "data-qa", "data-cy"
-                        ];
-                        for (var i = 0; i < common.length; i++) {
-                            var val = e.getAttribute(common[i]);
-                            if (val !== null && val !== "") attrs[common[i]] = val;
-                        }
-                        // Also get all data-* attributes
-                        for (var i = 0; i < e.attributes.length; i++) {
-                            var attr = e.attributes[i];
-                            if (attr.name.startsWith('data-')) attrs[attr.name] = attr.value;
-                        }
-                        return attrs;
-                    }
+        self.api_calls.append(call_info)
+        logger.debug(f"[TRACKER] Intercepted API {method}: {url[:100]}")
 
-                    function getContext(e) {
-                        var context = {
-                            label: '',
-                            surrounding_text: '',
-                            container_heading: '',
-                            form_title: '',
-                            semantic_purpose: ''
-                        };
 
-                        // 1. Better Label Search
-                        // a) Label for id
-                        if (e.id) {
-                            var l = document.querySelector('label[for="' + e.id + '"]');
-                            if (l) context.label = l.innerText || l.textContent;
-                        }
-                        // b) Parent label
-                        if (!context.label) {
-                            var p = e.parentElement;
-                            while (p && p !== document.body) {
-                                if (p.tagName === 'LABEL') {
-                                    context.label = p.innerText || p.textContent;
-                                    break;
-                                }
-                                p = p.parentElement;
-                            }
-                        }
-                        // c) aria-label or placeholder
-                        if (!context.label) context.label = e.getAttribute('aria-label') || e.getAttribute('placeholder') || '';
-
-                        // 2. Headings & Form Context
-                        var up = e.parentElement;
-                        var depth = 0;
-                        while (up && up !== document.body && depth < 10) {
-                            // Check for headings in this container
-                            var h = up.querySelectorAll('h1, h2, h3, h4, h5, h6, legend');
-                            if (h.length > 0 && !context.container_heading) {
-                                context.container_heading = h[0].innerText || h[0].textContent;
-                            }
-                            // Check for form title
-                            if (up.tagName === 'FORM' || up.classList.contains('form')) {
-                                var fh = up.querySelector('h1, h2, h3, .form-title');
-                                if (fh) context.form_title = fh.innerText || fh.textContent;
-                            }
-                            up = up.parentElement;
-                            depth++;
-                        }
-
-                        // 3. Nearby instructions/text
-                        var prev = e.previousElementSibling;
-                        if (prev && prev.innerText) context.surrounding_text = prev.innerText.substring(0, 200);
-
-                        return context;
-                    }
-
-                    function getOptions(e) {
-                        var options = [];
-                        function pushOption(node) {
-                            if (!node || node.nodeType !== 1) return;
-                            var t = node.innerText || node.textContent || '';
-                            if (!t.trim() && !node.getAttribute('value') && !node.id) return;
-                            options.push({
-                                text: t.trim(),
-                                value: node.getAttribute('data-value') || node.getAttribute('value') || '',
-                                id: node.id || '',
-                                selected: node.getAttribute('aria-selected') === 'true' || 
-                                          (node.classList && (node.classList.contains('selected') || node.classList.contains('is-selected'))) ||
-                                          node.getAttribute('aria-checked') === 'true'
-                            });
-                        }
-
-                        // 1. Native Select
-                        if (e.tagName === 'SELECT') {
-                            for (var i = 0; i < e.options.length; i++) {
-                                options.push({
-                                    value: e.options[i].value,
-                                    text: e.options[i].text,
-                                    selected: e.options[i].selected
-                                });
-                            }
-                            return options;
-                        }
-
-                        // 2. Custom Dropdown Heuristics
-                        var role = (e.getAttribute('role') || '').toLowerCase();
-                        var cls = (e.className || '');
-                        var id = (e.id || '');
-                        var isOption = role === 'option' || role === 'menuitem' || 
-                                      cls.indexOf('option') !== -1 || id.indexOf('option') !== -1 ||
-                                      e.tagName === 'LI';
-                        var isControl = role === 'combobox' || role === 'haspopup' || role === 'select' ||
-                                       cls.indexOf('control') !== -1 || cls.indexOf('select') !== -1 ||
-                                       cls.indexOf('dropdown') !== -1;
-
-                        if (isOption || isControl) {
-                            // A) Check aria-controls/owns (Standard ARIA)
-                            var controls = e.getAttribute('aria-controls') || e.getAttribute('aria-owns');
-                            if (controls) {
-                                var menu = document.getElementById(controls);
-                                if (menu) {
-                                    var nodes = menu.querySelectorAll('[role="option"], [role="menuitem"], .option, li');
-                                    for (var i=0; i<nodes.length; i++) pushOption(nodes[i]);
-                                }
-                            }
-
-                            // B) Parent Container Search
-                            if (options.length === 0) {
-                                var p = e.parentElement;
-                                var depth = 0;
-                                while (p && p !== document.body && depth < 5) {
-                                    var pr = (p.getAttribute('role') || '').toLowerCase();
-                                    var pc = (p.className || '');
-                                    if (pr.indexOf('listbox') !== -1 || pr.indexOf('menu') !== -1 || 
-                                        pc.indexOf('listbox') !== -1 || pc.indexOf('menu') !== -1 ||
-                                        pc.indexOf('dropdown') !== -1 ||
-                                        p.querySelectorAll('[role="option"], .option').length > 1) {
-                                        var nodes = p.querySelectorAll('[role="option"], [role="menuitem"], .option, li');
-                                        for (var i=0; i<nodes.length; i++) pushOption(nodes[i]);
-                                        break;
-                                    }
-                                    p = p.parentElement; depth++;
-                                }
-                            }
-
-                            // C) React-Select prefix-based search
-                            if (id.indexOf('react-select-') === 0) {
-                                var prefix = id.split('-option')[0].split('-control')[0].split('-list')[0].split('-menu')[0];
-                                if (prefix) {
-                                    // Search for options or menus sharing this prefix
-                                    var related = document.querySelectorAll('[id^="' + prefix + '"]');
-                                    for (var i=0; i<related.length; i++) {
-                                        var r = related[i];
-                                        if (r.id.indexOf('-option') !== -1 || r.getAttribute('role') === 'option') {
-                                            pushOption(r);
-                                        } else if (r.id.indexOf('-menu') !== -1 || r.id.indexOf('-list') !== -1) {
-                                            var sub = r.querySelectorAll('[role="option"], .option, li');
-                                            for (var j=0; j<sub.length; j++) pushOption(sub[j]);
-                                        }
-                                    }
-                                }
-                            }
-
-                            // D) Global Fallback for visible menus (useful for Portals)
-                            if (options.length === 0) {
-                                var globalMenus = document.querySelectorAll('[role="listbox"], [role="menu"], .select-options, .dropdown-menu');
-                                for (var i=0; i<globalMenus.length; i++) {
-                                    // Only consider if not explicitly hidden
-                                    var style = window.getComputedStyle(globalMenus[i]);
-                                    if (style.display !== 'none' && style.visibility !== 'hidden') {
-                                        var nodes = globalMenus[i].querySelectorAll('[role="option"], .option, li');
-                                        for (var j=0; j<nodes.length; j++) pushOption(nodes[j]);
-                                        if (options.length > 0) break;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Deduplicate by text and value
-                        var seen = {};
-                        return options.filter(function(o) {
-                            var k = (o.text || '') + '||' + (o.value || '') + '||' + (o.id || '');
-                            if (seen[k]) return false;
-                            seen[k] = true;
-                            return true;
-                        });
-                    }
-
-                    return {
-                        attributes: getAttributes(el),
-                        context: getContext(el),
-                        properties: {
-                            tagName: el.tagName,
-                            outerHTML: el.outerHTML ? el.outerHTML.substring(0, 1000) : '',
-                            value: el.value || '',
-                            className: el.className
-                        },
-                        options: getOptions(el)
-                    };
-                """, real_element)
-                
-                if all_data:
-                    info["attributes"] = all_data.get('attributes', {})
-                    info["context"] = all_data.get('context', {})
-                    info["properties"] = all_data.get('properties', {})
-                    if all_data.get('options'):
-                        info["dropdown_options"] = all_data['options']
-                    
-                    # Synthesize "Semantic Role" and "Exact Purpose"
-                    attrs = info["attributes"]
-                    ctx = info["context"]
-                    
-                    # Detect semantic type
-                    raw_type = attrs.get('type', '')
-                    role = attrs.get('role', '').lower()
-                    
-                    semantic_type = detect_field_type({
-                        **attrs,
-                        "tag": tag_name,
-                        "label": ctx.get('label', ''),
-                        "id": attrs.get('id', ''),
-                        "name": attrs.get('name', '')
-                    })
-                    
-                    # Special handling for Options/Buttons in a dropdown
-                    if role == 'option' or 'option' in attrs.get('class', '') or tag_name == 'li':
-                        semantic_type = "dropdown_option"
-                    elif role == 'combobox' or 'select' in attrs.get('class', ''):
-                        semantic_type = "select"
-
-                    info["semantic_type"] = semantic_type
-                    
-                    # Determine Purpose
-                    purpose = ""
-                    # 1. Direct label or placeholder
-                    if ctx.get('label'):
-                        purpose = ctx['label'].strip()
-                    elif attrs.get('placeholder'):
-                        purpose = attrs['placeholder']
-                    
-                    # 2. For options: the text of the option is the value, but purpose is the question
-                    if semantic_type == "dropdown_option":
-                        # If we have a container heading, that's likely the question
-                        if ctx.get('container_heading'):
-                            purpose = f"Choice for '{ctx['container_heading']}'"
-                        elif ctx.get('label'):
-                             purpose = f"Choice for '{ctx['label']}'"
-                        else:
-                            purpose = f"Option: {info['text']}"
-                    
-                    # 3. Fallbacks
-                    if not purpose:
-                        if attrs.get('aria-label'):
-                            purpose = attrs['aria-label']
-                        elif ctx.get('container_heading'):
-                            purpose = f"Input under {ctx['container_heading']}"
-                        else:
-                            purpose = info["text"] or attrs.get('name') or attrs.get('id') or "unknown field"
-
-                    info["exact_purpose"] = purpose
-                    info["role_description"] = f"A {semantic_type} ({tag_name}) used for {purpose}"
-                    
-            except Exception as e:
-                logger.warning(f"Could not extract enhanced properties via JS: {str(e)}")
-                # Falling back to basic attributes if JS fails
-                info["attributes"] = {}
-                for attr in ["id", "name", "class", "type", "placeholder"]:
-                    val = element.get_attribute(attr)
-                    if val: info["attributes"][attr] = val
-
-            return info
-            
-        except Exception as e:
-            logger.error(f"Error extracting element info: {str(e)}")
-            return {
-                "action": action,
-                "locator": locator,
-                "tag_name": "unknown",
-                "text": "",
-                "description": description,
-                "error": str(e)
-            }
-        
-    def track_click(self, element: WebElement, locator: str, description: str = ""):
-        """
-        Track a button/element click
-        
-        Args:
-            element: The WebElement that was clicked
-            locator: The locator string used to find the element
-            description: Optional description of the element
-        """
-        try:
-            # Record click timestamp for API association
-            click_timestamp = time.time()
-            
-            # Get comprehensive element information
-            element_info = self._extract_element_info(element, locator, "click", description)
-            element_info["timestamp"] = click_timestamp
-            
-            self.clicked_elements.append(element_info)
-            self.actions_log.append(element_info)
-            
-            # Track this click event for API association
-            self.click_events.append({
-                "timestamp": click_timestamp,
-                "locator": locator,
-                "element_info": element_info
-            })
-            
-            # Log to console
-            logger.info(f"[CLICK] {locator} | Tag: {element_info.get('tag_name', 'unknown')} | Purpose: {element_info.get('exact_purpose', 'unknown')}")
-            print(f"[CLICK] {locator} | Tag: {element_info.get('tag_name', 'unknown')} | Purpose: {element_info.get('exact_purpose', 'unknown')}")
-            
-        except Exception as e:
-            logger.error(f"Error tracking click for {locator}: {str(e)}")
-    
-    def track_field_input(self, element: WebElement, locator: str, value: str, description: str = ""):
-        """
-        Track a field input/fill action
-        
-        Args:
-            element: The WebElement that was filled
-            locator: The locator string used to find the element
-            value: The value that was entered
-            description: Optional description of the field
-        """
-        try:
-            # Get comprehensive element information
-            field_info = self._extract_element_info(element, locator, "input", description)
-            field_info["input_value"] = value
-            
-            self.filled_fields.append(field_info)
-            self.actions_log.append(field_info)
-            
-            # Log to console (mask sensitive data)
-            masked_value = "*" * len(value) if len(value) > 0 else ""
-            logger.info(f"[INPUT] {locator} | Type: {field_info.get('semantic_type', 'unknown')} | Purpose: {field_info.get('exact_purpose', 'unknown')}")
-            print(f"[INPUT] {locator} | Type: {field_info.get('semantic_type', 'unknown')} | Purpose: {field_info.get('exact_purpose', 'unknown')}")
-            
-        except Exception as e:
-            logger.error(f"Error tracking input for {locator}: {str(e)}")
-    
     def track_hover(self, element: WebElement, locator: str, description: str = ""):
-        """
-        Track a hover action
-        """
-        try:
-            # Re-verify element is still attached to DOM if possible
+        """Record a mouse hover interaction."""
+        info = extract_full_element_info(element, locator, "hover", description)
+        self.action_log.append({
+            "type": "hover",
+            "locator": locator,
+            "timestamp": time.time(),
+            "details": info
+        })
+
+
+    def track_skip(self, locator: str, action_type: str, reason: str = "Element not found"):
+        """Record an action that was skipped due to a missing element or other non-fatal issue."""
+        timestamp = time.time()
+        logger.warning(f"[TRACKER] Skipped {action_type.upper()} on: {locator} (Reason: {reason})")
+        
+        self.skipped_actions.append({
+            "type": action_type,
+            "locator": locator,
+            "timestamp": timestamp,
+            "reason": reason
+        })
+        
+        # Also add to action log as a "skip" entry
+        self.action_log.append({
+            "type": f"skipped_{action_type}",
+            "locator": locator,
+            "timestamp": timestamp,
+            "status": "skipped",
+            "reason": reason
+        })
+
+
+    def track_verification(self, element: Optional[WebElement], locator: str, expected: str, actual: str, success: bool, description: str = ""):
+        """Record a text verification or assertion."""
+        timestamp = time.time()
+        info = {}
+        if element:
             try:
-                _ = element.tag_name
-            except:
-                # If stale, we won't be able to extract info perfectly, but let's try
-                logger.warning(f"Element for {locator} went stale before tracking hover info")
-            
-            element_info = self._extract_element_info(element, locator, "hover", description)
-            self.actions_log.append(element_info)
-            logger.info(f"[HOVER] {locator} | Purpose: {element_info.get('exact_purpose', 'unknown')}")
-            print(f"[HOVER] {locator} | Purpose: {element_info.get('exact_purpose', 'unknown')}")
-        except Exception as e:
-            logger.error(f"Error tracking hover for {locator}: {str(e)}")
-            # Even if extraction fails, log that a hover happened
-            self.actions_log.append({
-                "action": "hover",
-                "locator": locator,
-                "description": description or "Hover tracked (info extraction failed)",
-                "tag_name": "unknown"
-            })
-
-    def track_verification(self, element: WebElement, locator: str, expected_text: str, actual_text: str, success: bool):
-        """
-        Track a verification action
-        """
-        try:
-            element_info = self._extract_element_info(element, locator, "verify")
-            element_info.update({
-                "expected_text": expected_text,
-                "actual_text": actual_text,
-                "success": success
-            })
-            self.actions_log.append(element_info)
-            status = "✓" if success else "✗"
-            logger.info(f"[VERIFY] {status} {locator} | Expected: {expected_text} | Actual: {actual_text}")
-            print(f"[VERIFY] {status} {locator} | Expected: {expected_text} | Actual: {actual_text}")
-        except Exception as e:
-            logger.error(f"Error tracking verification for {locator}: {str(e)}")
-
-    def track_get_text(self, element: WebElement, locator: str, text: str):
-        """
-        Track a text retrieval action
-        """
-        try:
-            element_info = self._extract_element_info(element, locator, "get_text")
-            element_info["retrieved_text"] = text
-            self.actions_log.append(element_info)
-            logger.info(f"[GET_TEXT] {locator} | Value: {text[:50]}...")
-            print(f"[GET_TEXT] {locator} | Value: {text[:50]}...")
-        except Exception as e:
-            logger.error(f"Error tracking get_text for {locator}: {str(e)}")
-
-    def find_associated_click(self, api_timestamp: float) -> Dict[str, Any]:
-        """
-        Find the click event that triggered this API call based on timestamp.
-        Returns the click event if API occurred within the capture window after a click.
+                info = extract_full_element_info(element, locator, "verify", description)
+            except Exception:
+                pass
         
-        Args:
-            api_timestamp: Timestamp of the API call
-            
-        Returns:
-            Dictionary with click event info, or None if no associated click found
-        """
-        # Find the most recent click before this API call
-        associated_click = None
-        min_time_diff = float('inf')
+        self.action_log.append({
+            "type": "verify",
+            "locator": locator,
+            "expected": expected,
+            "actual": actual,
+            "success": success,
+            "timestamp": timestamp,
+            "details": info
+        })
         
-        for click_event in self.click_events:
-            click_time = click_event["timestamp"]
-            time_diff = api_timestamp - click_time
-            
-            # API must occur AFTER the click and within the capture window
-            if 0 <= time_diff <= self.api_capture_window:
-                if time_diff < min_time_diff:
-                    min_time_diff = time_diff
-                    associated_click = {
-                        "locator": click_event["locator"],
-                        "time_after_click": time_diff,
-                        "element_info": click_event["element_info"]
-                    }
-        
-        return associated_click
-    
-    def track_tab_switch(self, tab_index_or_handle, description: str = ""):
-        """
-        Track a tab switch
-        """
-        info = {
-            "action": "switch_tab",
-            "tab": str(tab_index_or_handle),
-            "description": description,
-            "locator": "browser",
-            "tag_name": "browser"
-        }
-        self.actions_log.append(info)
-        print(f"[TAB] Switched to tab: {tab_index_or_handle}")
+        logger.info(f"[TRACKER] Intercepted VERIFY on: {locator} ({'PASSED' if success else 'FAILED'})")
 
-    def capture_screenshot(self, driver, label: str = "screenshot"):
-        """
-        Capture a screenshot and store it as base64
-        """
-        if not driver:
-            return
 
-        try:
-            # Check if driver is still alive/connected
-            # We try a simple property access to verify connection
-            
-            # Temporarily silence connection-level logging to avoid noisy retries in logs
-            conn_logger = logging.getLogger('urllib3.connectionpool')
-            remote_logger = logging.getLogger('selenium.webdriver.remote.remote_connection')
-            old_conn_level = conn_logger.level
-            old_remote_level = remote_logger.level
-            conn_logger.setLevel(logging.ERROR)
-            remote_logger.setLevel(logging.ERROR)
-
+    def track_get_text(self, element: Optional[WebElement], locator: str, text: str, description: str = ""):
+        """Record a text extraction action."""
+        timestamp = time.time()
+        info = {}
+        if element:
             try:
-                _ = driver.current_window_handle
-            finally:
-                conn_logger.setLevel(old_conn_level)
-                remote_logger.setLevel(old_remote_level)
+                info = extract_full_element_info(element, locator, "get_text", description)
+            except Exception:
+                pass
+                
+        self.action_log.append({
+            "type": "get_text",
+            "locator": locator,
+            "text": text,
+            "timestamp": timestamp,
+            "details": info
+        })
+        
+        logger.info(f"[TRACKER] Intercepted GET_TEXT on: {locator} -> '{text[:50]}'")
+
+
+    def track_page_inventory(self, driver):
+        """
+        Scans the current page for ALL interactive elements to create a complete inventory.
+        This fulfills the "track all elements" requirement.
+        """
+        logger.info("[TRACKER] Starting Universal Page Inventory scan...")
+        try:
+            # Common interactive selectors
+            selectors = [
+                "button", "input", "a", "select", "textarea",
+                "[onclick]", "[role='button']", "[role='link']", "[role='menuitem']"
+            ]
             
-            screenshot_b64 = driver.get_screenshot_as_base64()
+            elements = driver.find_elements_by_css_selector(", ".join(selectors)) if hasattr(driver, 'find_elements_by_css_selector') else driver.find_elements("css selector", ", ".join(selectors))
+            
+            for i, element in enumerate(elements):
+                try:
+                    # Limit to visible elements to avoid noise
+                    if not element.is_displayed():
+                        continue
+                        
+                    # Extract full info for each element
+                    info = extract_full_element_info(element, f"inventory_element_{i}", "inventory")
+                    self.page_inventory.append(info)
+                except Exception:
+                    continue
+                    
+            logger.info(f"[TRACKER] ✓ Inventory scan complete. Captured {len(self.page_inventory)} elements.")
+        except Exception as e:
+            logger.warning(f"[TRACKER] ⚠️ Inventory scan failed: {e}")
+
+
+    # ============================================================================
+    # SECTION 2: STATE & CONTEXT CAPTURE
+    # ============================================================================
+
+    def capture_screenshot(self, driver, label: str = "state_capture"):
+        """Snapshot the current visual state for debugging or reporting."""
+        try:
+            b64 = driver.get_screenshot_as_base64()
             self.screenshots.append({
                 "label": label,
-                "data": f"data:image/png;base64,{screenshot_b64}",
-                "timestamp": len(self.actions_log) # Using log length as pseudo-index
+                "timestamp": time.time(),
+                "data": b64
             })
-            logger.info(f"[SCREENSHOT] Captured: {label}")
-            print(f"[SCREENSHOT] Captured: {label}")
         except Exception as e:
-            # Silently ignore if driver is closed (common at end of script)
-            logger.debug(f"Could not capture screenshot (driver likely closed): {e}")
-
-    def get_summary(self) -> Dict[str, Any]:
-        """
-        Get a summary of all tracked actions
-        
-        Returns:
-            Dictionary with clicked elements, filled fields, and full action log
-        """
-        return {
-            "clicked_elements": self.clicked_elements,
-            "filled_fields": self.filled_fields,
-            "actions_log": self.actions_log,
-            "screenshots": self.screenshots,
-            "api_calls": self.api_calls,
-            "verifications": [a for a in self.actions_log if a.get('action') == 'verify'],
-            "text_retrievals": [a for a in self.actions_log if a.get('action') == 'get_text'],
-            "summary": {
-                "total_clicks": len(self.clicked_elements),
-                "total_inputs": len(self.filled_fields),
-                "total_verifications": len([a for a in self.actions_log if a.get('action') == 'verify']),
-                "total_text_retrievals": len([a for a in self.actions_log if a.get('action') == 'get_text']),
-                "total_api_calls": len(self.api_calls),
-                "total_actions": len(self.actions_log)
-            }
-        }
-    
-    def print_summary(self):
-        """Print a formatted summary to console"""
-        print("\n" + "="*80)
-        print("SELENIUM ACTION TRACKING SUMMARY")
-        print("="*80)
-        
-        print(f"\nTotal Actions: {len(self.actions_log)}")
-        print(f"  - Clicks: {len(self.clicked_elements)}")
-        print(f"  - Field Inputs: {len(self.filled_fields)}")
-        print(f"  - API Calls Intercepted: {len(self.api_calls)}")
-        
-        if self.clicked_elements:
-            print("\n" + "-"*80)
-            print("CLICKED ELEMENTS (COMPREHENSIVE DATA):")
-            print("-"*80)
-            for idx, elem in enumerate(self.clicked_elements, 1):
-                print(f"\n{idx}. {elem['locator']}")
-                print(f"   Tag: {elem.get('tag_name', 'unknown')}")
-                
-                # Show semantic information
-                if elem.get('exact_purpose'):
-                    print(f"   Purpose: {elem['exact_purpose']}")
-                if elem.get('role_description'):
-                    print(f"   Role: {elem['role_description']}")
-                
-                # Show text if available
-                if elem.get('text'):
-                    print(f"   Text: {elem['text']}")
-                
-                # Show all attributes
-                if elem.get('attributes'):
-                    print(f"   \n   HTML Attributes:")
-                    for attr_name, attr_value in elem['attributes'].items():
-                        if attr_value:  # Only show non-empty values
-                            print(f"      {attr_name}: {attr_value}")
-                
-                # Show context
-                if elem.get('context'):
-                    print(f"   \n   Page Context:")
-                    for k, v in elem['context'].items():
-                        if v: print(f"      {k}: {v}")
-                
-                # Show dropdown options if available
-                if elem.get('dropdown_options'):
-                    print(f"   \n   Dropdown Options ({len(elem['dropdown_options'])} found):")
-                    for opt in elem['dropdown_options'][:10]:
-                        print(f"      - {opt.get('text', 'No Text')} (Value: {opt.get('value', 'None')})")
-                    if len(elem['dropdown_options']) > 10:
-                        print(f"      ... and {len(elem['dropdown_options']) - 10} more")
-        
-        if self.filled_fields:
-            print("\n" + "-"*80)
-            print("FILLED FIELDS (COMPREHENSIVE DATA):")
-            print("-"*80)
-            for idx, field in enumerate(self.filled_fields, 1):
-                print(f"\n{idx}. {field['locator']}")
-                print(f"   Tag: {field.get('tag_name', 'unknown')}")
-                print(f"   Semantic Type: {field.get('semantic_type', 'unknown')}")
-                
-                if field.get('exact_purpose'):
-                    print(f"   Purpose: {field['exact_purpose']}")
-                
-                print(f"   Input Value: {'*' * len(str(field.get('input_value', '')))}")
-                
-                # Show all attributes
-                if field.get('attributes'):
-                    print(f"   \n   HTML Attributes:")
-                    for attr_name, attr_value in field['attributes'].items():
-                        if attr_value:
-                            print(f"      {attr_name}: {attr_value}")
-                
-                # Show context
-                if field.get('context'):
-                    print(f"   \n   Page Context:")
-                    for k, v in field['context'].items():
-                        if v: print(f"      {k}: {v}")
-                
-                # Show dropdown options if available
-                if field.get('dropdown_options'):
-                    print(f"   \n   Dropdown Options ({len(field['dropdown_options'])} found):")
-                    for opt in field['dropdown_options'][:10]:
-                        print(f"      - {opt.get('text', 'No Text')} (Value: {opt.get('value', 'None')})")
-                    if len(field['dropdown_options']) > 10:
-                        print(f"      ... and {len(field['dropdown_options']) - 10} more")
-        
-        if self.api_calls:
-            print("\n" + "-"*80)
-            print("INTERCEPTED API CALLS (CLICK-TRIGGERED):")
-            print("-"*80)
-            
-            # Group APIs by the click that triggered them
-            apis_by_click = {}
-            for call in self.api_calls:
-                trigger = call.get('triggered_by_click', 'Unknown')
-                if trigger not in apis_by_click:
-                    apis_by_click[trigger] = []
-                apis_by_click[trigger].append(call)
-            
-            # Display grouped by click
-            for click_locator, apis in apis_by_click.items():
-                print(f"\n┌─ APIs triggered by: '{click_locator}' ({len(apis)} call{'s' if len(apis) != 1 else ''})")
-                print("│")
-                for idx, call in enumerate(apis, 1):
-                    time_after = call.get('time_after_click')
-                    time_str = f" [{time_after:.2f}s after click]" if time_after is not None else ""
-                    print(f"│  {idx}. [{call['method']}] {call['url']}{time_str}")
-                    
-                    if call.get('response_code'):
-                        print(f"│     Status: {call['response_code']}")
-                    
-                    # Show Payload
-                    if call.get('payload'):
-                        try:
-                            if isinstance(call['payload'], bytes):
-                                p_str = call['payload'].decode('utf-8', errors='replace')
-                            else:
-                                p_str = str(call['payload'])
-                            print(f"│     Payload: {p_str[:200]}{'...' if len(p_str) > 200 else ''}")
-                        except:
-                            pass
-                    
-                    # Show Response Body
-                    if call.get('response_body'):
-                        try:
-                            import json
-                            if isinstance(call['response_body'], bytes):
-                                r_str = call['response_body'].decode('utf-8', errors='replace')
-                            else:
-                                r_str = str(call['response_body'])
-                            
-                            try:
-                                # Try to format as JSON if possible
-                                r_json = json.loads(r_str)
-                                r_pretty = json.dumps(r_json, indent=2)
-                                print(f"│     Response: {r_pretty[:500]}{'...' if len(r_pretty) > 500 else ''}")
-                            except:
-                                print(f"│     Response: {r_str[:200]}{'...' if len(r_str) > 200 else ''}")
-                        except:
-                            pass
-                    
-                    if idx < len(apis):
-                        print("│")
-                print("└" + "─"*79)
-
-        print("\n" + "="*80 + "\n")
+            logger.warning(f"Screenshot capture failed: {e}")
 
 
-class TrackedHelper:
-    """
-    Drop-in replacement for Selenium helper class that tracks all actions.
-    Can be used to replace the original helper in user scripts.
-    """
-    
-    def __init__(self, driver, tracker: SeleniumActionTracker, locators_dict: Dict[str, list]):
-        """
-        Initialize tracked helper
-        
-        Args:
-            driver: Selenium WebDriver instance
-            tracker: SeleniumActionTracker instance to log actions
-            locators_dict: Dictionary mapping locator names to list of (By.X, "value") tuples
-        """
-        self.driver = driver
-        self.tracker = tracker
-        self.locators = locators_dict
-    
-    def _find_element_with_retry(self, locator_key: str):
-        """
-        Try all paths for a locator until one is found
-        """
-        if locator_key not in self.locators:
-            # If it's not a key, maybe it's a raw selector?
-            # For now, let's just log error
-            logger.error(f"Locator '{locator_key}' not found in locators dictionary")
+    def find_associated_click(self, api_timestamp: float) -> Optional[Dict]:
+        """Heuristic: finds the UI action most likely to have triggered an API call."""
+        if not self.clicked_elements:
             return None
-        
-        paths = self.locators[locator_key]
-        for by_type, value in paths:
-            try:
-                element = self.driver.find_element(by_type, value)
-                return element
-            except:
-                continue
+            
+        # Check clicks in reverse (most recent first)
+        for click in reversed(self.clicked_elements):
+            delta = api_timestamp - click['timestamp']
+            if 0 <= delta <= self.api_window:
+                # Add calculated delta for API coordination
+                return {**click, 'time_after_click': delta}
         return None
 
-    def click(self, locator_key: str, description: str = ""):
-        """
-        Click an element and track the action
-        """
-        element = self._find_element_with_retry(locator_key)
-        if element:
-            element.click()
-            self.tracker.track_click(element, locator_key, description)
-            return True
-        else:
-            logger.error(f"Could not find element for locator '{locator_key}' using any provided path")
-            return False
-    
-    def send_keys(self, locator_key: str, text: str, description: str = ""):
-        """
-        Send keys to an element and track the action
-        """
-        element = self._find_element_with_retry(locator_key)
-        if element:
-            element.send_keys(text)
-            self.tracker.track_field_input(element, locator_key, text, description)
-            return True
-        else:
-            logger.error(f"Could not find element for locator '{locator_key}' using any provided path")
-            return False
 
-    def hover(self, locator_key: str, description: str = ""):
-        """
-        Hover over an element and track the action
-        """
-        element = self._find_element_with_retry(locator_key)
-        if element:
-            from selenium.webdriver.common.action_chains import ActionChains
-            ActionChains(self.driver).move_to_element(element).perform()
-            self.tracker.track_hover(element, locator_key, description)
-            return True
-        else:
-            logger.error(f"Could not find element for hover: '{locator_key}'")
-            return False
+    # ============================================================================
+    # SECTION 3: SUMMARY & FINALIZATION
+    # ============================================================================
 
-    def switch_tab(self, tab_index_or_handle=""):
-        """
-        Switch to a different tab/window
-        """
-        try:
-            if isinstance(tab_index_or_handle, int):
-                handles = self.driver.window_handles
-                if tab_index_or_handle < len(handles):
-                    self.driver.switch_to.window(handles[tab_index_or_handle])
-                    self.tracker.track_tab_switch(tab_index_or_handle)
-                    return True
-            elif tab_index_or_handle == "":
-                # Switch to last handle if empty string
-                handles = self.driver.window_handles
-                self.driver.switch_to.window(handles[-1])
-                self.tracker.track_tab_switch("last")
-                return True
-            else:
-                self.driver.switch_to.window(tab_index_or_handle)
-                self.tracker.track_tab_switch(tab_index_or_handle)
-                return True
-        except Exception as e:
-            logger.error(f"Failed to switch tab: {e}")
-            return False
-    
-    def is_verify(self, locator_key: str, text: str):
-        """
-        Verify if an element has the expected text
-        """
-        element = self._find_element_with_retry(locator_key)
-        if element:
-            actual_text = element.text
-            success = text.lower() in actual_text.lower()
-            self.tracker.track_verification(element, locator_key, text, actual_text, success)
-            return success
-        return False
+    def get_summary(self) -> Dict[str, Any]:
+        """Aggregate all tracked metadata into a single portable result set."""
+        duration = (datetime.now() - self.start_time).total_seconds()
+        
+        # Define flat summary keys for both console and frontend legacy support
+        summary = {
+            "session_duration": f"{duration:.2f}s",
+            "total_actions": len(self.action_log),
+            "total_clicks": len(self.clicked_elements),
+            "total_inputs": len(self.filled_fields),
+            "total_api_calls": len(self.api_calls),
+            "interaction_count": len(self.action_log),
+            "click_count": len(self.clicked_elements),
+            "fill_count": len(self.filled_fields),
+            "api_count": len(self.api_calls)
+        }
 
-    def get_text(self, locator_key: str):
-        """
-        Get text from an element
-        """
-        element = self._find_element_with_retry(locator_key)
-        if element:
-            text = element.text
-            self.tracker.track_get_text(element, locator_key, text)
-            return text
-        return ""
+        return {
+            "summary": summary,
+            "session_duration": summary["session_duration"], # Flattened for console/legacy
+            "all_locators": self.all_locators,
+            "total_locators_found": len(self.all_locators),
+            "click_events": self.click_events,
+            "fill_events": self.fill_events,
+            "api_calls": self.api_calls,
+            "interactions": self.action_log,
+            "action_log": self.action_log,
+            "clicked_elements": self.clicked_elements,
+            "filled_fields": self.filled_fields,
+            "total_actions": summary["total_actions"], # Extra flattening
+            "total_clicks": summary["total_clicks"],
+            "total_inputs": summary["total_inputs"],
+            "total_api_calls": summary["total_api_calls"],
+            "skipped_actions": self.skipped_actions,
+            "total_skips": len(self.skipped_actions),
+            "page_inventory": self.page_inventory,
+            "total_inventory_count": len(self.page_inventory),
+            "screenshots": self.screenshots,
+            "screenshots_count": len(self.screenshots)
+        }
 
-    def find_element(self, locator_key: str):
-        """
-        Find an element using locator key with retry across all paths
-        """
-        element = self._find_element_with_retry(locator_key)
-        if not element:
-            raise ValueError(f"Locator '{locator_key}' not found in any path")
-        return element
+    def print_summary(self):
+        """Output a professional log summary to the server console."""
+        s = self.get_summary()
+        logger.info("=" * 60)
+        logger.info(f"TRACKING SESSION COMPLETE - {s['session_duration']}")
+        logger.info("-" * 60)
+        logger.info(f"Clicks: {len(s['click_events'])}")
+        logger.info(f"Inputs: {len(s['fill_events'])}")
+        logger.info(f"APIs:   {len(s['api_calls'])}")
+        logger.info("=" * 60)
+
+
+# ============================================================================
+# SECTION 4: TRACKED HELPER (CODE WRAPPER)
+# ============================================================================
+
+# SESSION MONITORING COMPLETE

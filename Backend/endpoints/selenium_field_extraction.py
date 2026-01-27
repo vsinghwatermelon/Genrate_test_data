@@ -1,14 +1,15 @@
 """
 Selenium Script Field Extraction Endpoint
 
-Clean, modular implementation for extracting form fields from Selenium scripts
-and HTML pages. Replaces the monolithic extract-fields-from-folder endpoint.
+Provides structured logic for extracting form fields from Selenium scripts 
+and their target HTML pages. Automatically identifies script structure,
+parses locators, navigates target URLs, and generates an AI-powered schema.
 """
 
 import os
 import tempfile
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from fastapi import Request, UploadFile, File, HTTPException
 
 from utils.locator_parser import LocatorParser, ScriptAnalyzer
@@ -20,235 +21,69 @@ from endpoints.common import extract_zip_file
 
 logger = logging.getLogger(__name__)
 
-# Constants
-MAX_FORM_PAGES = 100  # Maximum pages to extract for complex forms
-MAX_FIELD_COUNT = 500  # Maximum fields to extract
-MAX_LOCATOR_COUNT = 1000  # Maximum locators to parse
+# Extraction Constraints
+MAX_FORM_PAGES = 100
+MAX_FIELD_COUNT = 500
+MAX_LOCATOR_COUNT = 1000
 
+
+# ============================================================================
+# MAIN EXTRACTION ENDPOINT
+# ============================================================================
 
 async def extract_fields_from_uploaded_folder(
     request: Request,
     file: UploadFile = File(...)
 ) -> Dict[str, Any]:
     """
-    Extract form fields from uploaded Selenium script folder.
+    Extract form fields and generate a schema from an uploaded Selenium package.
     
-    Dynamic approach that handles any script structure:
-    1. Extract and identify scripts/locator files automatically
-    2. Parse locator configurations in any format
-    3. Navigate website and extract fields dynamically
-    4. Generate clean, user-editable schema
-    
-    Args:
-        request: FastAPI request (to get form data like ai_model)
-        file: Uploaded zip file containing scripts and locator configs
-    
-    Returns:
-        Dictionary with extracted fields, schema, and metadata
+    The process involves:
+    1. Processing the uploaded ZIP and identifying core files.
+    2. Analyzing script metadata (target URL, actions).
+    3. Parsing all associated locator configurations.
+    4. Navigating the target site with Selenium to extract live HTML fields.
+    5. Using AI to generate a clean, labeled schema for test data.
     """
     endpoint_logger = EndpointLogger("field_extraction")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            # Step 1: Extract uploaded zip file
-            endpoint_logger.info("="*60)
-            endpoint_logger.info("[STEP 1] Extracting uploaded zip file...")
-            await extract_zip_file(file, tmpdir)
-            endpoint_logger.info(f"[STEP 1] ✓ Extracted to: {tmpdir}")
+            endpoint_logger.info("=" * 60)
+            endpoint_logger.info("STARTING DEEP FIELD EXTRACTION")
+            endpoint_logger.info("=" * 60)
             
-            # Step 2: Identify script and locator files
-            endpoint_logger.info("[STEP 2] Identifying script and locator files...")
-            main_script, locator_files = ScriptAnalyzer.identify_script_files(tmpdir)
-            endpoint_logger.info(
-                f"[STEP 2] ✓ Found main script: {os.path.basename(main_script) if main_script else 'None'}"
+            # 1. Asset Identification
+            main_script, locator_files = await _identify_script_assets(file, tmpdir, endpoint_logger)
+            
+            # 2. Metadata Extraction
+            target_url, actions, locator_refs = _extract_script_metadata(main_script, locator_files, endpoint_logger)
+            
+            # 3. Locator Parsing
+            all_locators = _parse_locator_configs(locator_files, endpoint_logger)
+            
+            # 4. Selenium-based HTML Extraction
+            page_sources, all_fields, fields_by_locator = _run_selenium_extraction(
+                target_url, actions, all_locators, locator_refs, endpoint_logger
             )
-            endpoint_logger.info(
-                f"[STEP 2] ✓ Found {len(locator_files)} locator files: "
-                f"{[os.path.basename(f) for f in locator_files]}"
-            )
             
-            if not main_script:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No Selenium/automation script found. Upload a folder with a main script file."
-                )
-            
-            # Step 3: Read script content
-            endpoint_logger.info("[STEP 3] Reading script content...")
-            with open(main_script, 'r', encoding='utf-8') as f:
-                script_content = f.read()
-            endpoint_logger.info(f"[STEP 3] ✓ Read {len(script_content)} characters from script")
-            
-            # Step 4: Extract metadata from script
-            endpoint_logger.info("[STEP 4] Extracting metadata from script...")
-            target_url = ScriptAnalyzer.extract_url(script_content)
-            locator_refs = ScriptAnalyzer.extract_locator_references(script_content)
-            actions = ScriptAnalyzer.extract_actions(script_content)
-            endpoint_logger.info(f"[STEP 4] ✓ Extracted URL: {target_url}")
-            endpoint_logger.info(f"[STEP 4] ✓ Found {len(locator_refs)} locator references")
-            endpoint_logger.info(f"[STEP 4] ✓ Found {len(actions)} actions")
-            
-            if not target_url:
-                # Try to find URL in locator files as fallback
-                endpoint_logger.warning(
-                    f"No URL found in {os.path.basename(main_script)}, checking locator files..."
-                )
-                for locator_file in locator_files:
-                    try:
-                        with open(locator_file, 'r', encoding='utf-8') as f:
-                            locator_content = f.read()
-                        fallback_url = ScriptAnalyzer.extract_url(locator_content)
-                        if fallback_url:
-                            endpoint_logger.info(
-                                f"Found URL in {os.path.basename(locator_file)}: {fallback_url}"
-                            )
-                            target_url = fallback_url
-                            break
-                    except Exception as e:
-                        endpoint_logger.warning(f"Could not read {locator_file}: {e}")
-            
-            if not target_url:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Could not find target URL in {os.path.basename(main_script)} or locator files."
-                )
-            
-            # Step 5: Parse locator configurations
-            endpoint_logger.info("[STEP 5] Parsing locator configurations...")
-            all_locators = {}
-            for locator_file in locator_files:
-                try:
-                    parsed = LocatorParser.parse_file(locator_file)
-                    normalized = LocatorParser.normalize_locator_data(parsed)
-                    
-                    # Validate locator count
-                    if len(all_locators) + len(normalized) > MAX_LOCATOR_COUNT:
-                        endpoint_logger.warning(
-                            f"Exceeded max locators ({MAX_LOCATOR_COUNT}), skipping remaining files"
-                        )
-                        break
-                    
-                    all_locators.update(normalized)
-                    endpoint_logger.info(
-                        f"[STEP 5] ✓ Parsed {len(normalized)} locators from {os.path.basename(locator_file)}"
-                    )
-                except Exception as e:
-                    endpoint_logger.error(f"[STEP 5] ✗ Failed to parse {locator_file}: {e}")
-            
-            endpoint_logger.info(f"[STEP 5] ✓ Total locators parsed: {len(all_locators)}")
-            
-            # Step 6: Extract fields from HTML
-            endpoint_logger.info("[STEP 6] Starting HTML field extraction with Selenium...")
-            fields_by_locator = {}
-            all_fields = []
-            page_sources = []
-            
-            with HTMLFieldExtractor() as extractor:
-                endpoint_logger.info("[STEP 6] Selenium WebDriver initialized")
-                endpoint_logger.info(f"[STEP 6] Navigating to {target_url} and extracting fields...")
-                
-                # Custom logging callback for extractor
-                def extractor_log(msg: str):
-                    endpoint_logger.info(f"[STEP 6] {msg}")
-                
-                # Capture pages and fields
-                page_sources, all_fields = extractor.navigate_and_extract(
-                    url=target_url,
-                    actions=actions,
-                    locators=all_locators,
-                    max_pages=MAX_FORM_PAGES,
-                    log_callback=extractor_log
-                )
-                endpoint_logger.info(f"[STEP 6] ✓ Captured {len(page_sources)} pages")
-                endpoint_logger.info(f"[STEP 6] ✓ Extracted {len(all_fields)} fields (before deduplication)")
-                
-                if all_locators and locator_refs:
-                    endpoint_logger.info(
-                        f"[STEP 6] Extracting fields by {len(locator_refs)} specific locators from script..."
-                    )
-                    combined_html = '\n'.join(page_sources)
-                    fields_by_locator = extractor.extract_fields_by_locators(
-                        html_content=combined_html,
-                        locators=all_locators,
-                        locator_keys=locator_refs
-                    )
-                    endpoint_logger.info(f"[STEP 6] ✓ Found {len(fields_by_locator)} fields by locator")
-                    
-                    # Log specific locator matches for transparency
-                    for loc_key, matched_list in fields_by_locator.items():
-                        if matched_list:
-                            field = matched_list[0]
-                            name = field.get('label') or field.get('name') or field.get('id')
-                            endpoint_logger.info(f"   ✓ {loc_key} matched: {name}")
-
-                    locator_matched_list = []
-                    for loc_key, matched_list in fields_by_locator.items():
-                        for field in matched_list:
-                            field['is_verified_locator'] = True
-                            field['locator_key'] = loc_key
-                            locator_matched_list.append(field)
-                    
-                    all_fields = locator_matched_list + all_fields
-                
-                all_fields = extractor.deduplicate_fields(all_fields)
-                endpoint_logger.info(f"[STEP 6] ✓ After deduplication: {len(all_fields)} unique fields")
-            
-            # Validate field count
+            # 5. Metadata Processing and Deduplication
             if len(all_fields) > MAX_FIELD_COUNT:
-                endpoint_logger.warning(
-                    f"Extracted {len(all_fields)} fields, truncating to {MAX_FIELD_COUNT}"
-                )
+                endpoint_logger.warning(f"Truncating fields to {MAX_FIELD_COUNT} limit.")
                 all_fields = all_fields[:MAX_FIELD_COUNT]
             
-            endpoint_logger.info(f"[STEP 6] ✓ Total unique fields extracted: {len(all_fields)}")
+            # 6. AI Schema Generation
+            form_data = await request.form()
+            ai_model = form_data.get("ai_model", "ollama")
+            parsed_schema, is_valid, errors = _generate_ai_schema(all_fields, ai_model, endpoint_logger)
             
-            # Step 7: Generate schema using LLM
-            form = await request.form()
-            ai_model = form.get("ai_model", "ollama")
-            endpoint_logger.info(f"[STEP 7] Generating schema using AI model: {ai_model}")
-            
-            try:
-                llm = LLMFactory.create_llm(provider=ai_model)
-                schema_gen = SchemaGenerator(llm=llm)
-                endpoint_logger.info("[STEP 7] Using LLM for schema generation...")
-                parsed_schema = schema_gen.generate_schema(all_fields, use_llm=True)
-                endpoint_logger.info(f"[STEP 7] ✓ LLM generated {len(parsed_schema)} schema entries")
-            except Exception as e:
-                endpoint_logger.error(f"[STEP 7] ✗ LLM schema generation failed: {e}")
-                endpoint_logger.info("[STEP 7] Falling back to rule-based schema generation...")
-                schema_gen = SchemaGenerator(llm=None)
-                parsed_schema = schema_gen.generate_schema(all_fields, use_llm=False)
-                endpoint_logger.info(f"[STEP 7] ✓ Rule-based generation created {len(parsed_schema)} schema entries")
-            
-            # Step 8: Post-processing schema
-            endpoint_logger.info("[STEP 8] Post-processing schema...")
-            parsed_schema = schema_gen.deduplicate_schema(parsed_schema)
-            endpoint_logger.info(f"[STEP 8] ✓ After deduplication: {len(parsed_schema)} schema entries")
-            parsed_schema = schema_gen.merge_field_metadata(parsed_schema, all_fields)
-            endpoint_logger.info("[STEP 8] ✓ Merged field metadata")
-            
-            # Step 9: Validate schema
-            is_valid, errors = schema_gen.validate_schema(parsed_schema)
-            endpoint_logger.info(f"[STEP 8] ✓ Schema validation: {'VALID' if is_valid else 'INVALID'}")
-            if errors:
-                for error in errors:
-                    endpoint_logger.warning(f"Schema validation error: {error}")
-            
-            # Step 10: Prepare consolidated field list
-            endpoint_logger.info("[STEP 9] Preparing consolidated field list...")
+            # 7. Final Consolidation
             consolidated_fields = _prepare_consolidated_fields(all_fields)
             
-            # Step 11: Return comprehensive response
-            endpoint_logger.info("="*60)
-            endpoint_logger.info("✓ EXTRACTION COMPLETE!")
-            endpoint_logger.info(f"  - Script: {os.path.basename(main_script)}")
-            endpoint_logger.info(f"  - URL: {target_url}")
-            endpoint_logger.info(f"  - Pages: {len(page_sources)}")
-            endpoint_logger.info(f"  - Fields: {len(all_fields)}")
-            endpoint_logger.info(f"  - Schema: {len(parsed_schema)} entries")
-            endpoint_logger.info(f"  - Valid: {is_valid}")
-            endpoint_logger.info(f"  - Duration: {endpoint_logger.get_duration():.2f}s")
-            endpoint_logger.info("="*60)
+            endpoint_logger.info("=" * 60)
+            endpoint_logger.info("EXTRACTION SUCCESSFUL")
+            endpoint_logger.info(f"Fields: {len(all_fields)}, Schema: {len(parsed_schema)}")
+            endpoint_logger.info("=" * 60)
             
             return {
                 "success": True,
@@ -256,14 +91,12 @@ async def extract_fields_from_uploaded_folder(
                 "script_name": os.path.basename(main_script),
                 "locator_files": [os.path.basename(f) for f in locator_files],
                 "pages_captured": len(page_sources),
-                "actions_executed": len(actions),
-                "locator_keys": locator_refs,
                 "unique_field_count": len(all_fields),
                 "fields_by_locator": fields_by_locator,
                 "consolidated_fields": consolidated_fields,
                 "parsed_schema": parsed_schema,
                 "schema_valid": is_valid,
-                "schema_errors": errors if errors else None,
+                "schema_errors": errors or None,
                 "ai_model_used": ai_model,
                 "logs": endpoint_logger.get_logs()
             }
@@ -271,38 +104,156 @@ async def extract_fields_from_uploaded_folder(
         except HTTPException:
             raise
         except Exception as e:
-            endpoint_logger.error(f"Unexpected error in field extraction: {e}", exc_info=True)
+            endpoint_logger.error(f"Critical failure in extraction pipeline: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail=f"Field extraction failed: {str(e)}"
+                detail=f"Field extraction pipeline failed: {str(e)}"
             )
 
 
+# ============================================================================
+# HELPER METHODS (PIPELINE STEPS)
+# ============================================================================
+
+async def _identify_script_assets(file: UploadFile, tmpdir: str, log: EndpointLogger) -> Tuple[str, List[str]]:
+    """Download and extract the ZIP package to find scripts and locators."""
+    log.info("[STEP 1] Validating and extracting script package...")
+    await extract_zip_file(file, tmpdir)
+    
+    main_script, locator_files = ScriptAnalyzer.identify_script_files(tmpdir)
+    
+    if not main_script:
+        raise HTTPException(
+            status_code=400,
+            detail="No Python Selenium script identified in the package."
+        )
+    
+    log.info(f"Found main script: {os.path.basename(main_script)}")
+    log.info(f"Found {len(locator_files)} locator files.")
+    return main_script, locator_files
+
+
+def _extract_script_metadata(script_path: str, locator_files: List[str], log: EndpointLogger) -> Tuple[str, List[Dict], List[str]]:
+    """Extract URL, actions, and locator references from the script code."""
+    log.info("[STEP 2] Analyzing script source code...")
+    
+    with open(script_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    target_url = ScriptAnalyzer.extract_url(content)
+    locator_refs = ScriptAnalyzer.extract_locator_references(content)
+    actions = ScriptAnalyzer.extract_actions(content)
+    
+    # Fallback to locator files for URL if missing in main script
+    if not target_url:
+        for loc_file in locator_files:
+            try:
+                with open(loc_file, 'r', encoding='utf-8') as f:
+                    url = ScriptAnalyzer.extract_url(f.read())
+                    if url:
+                        target_url = url
+                        log.info(f"Retrieved URL from locator file: {url}")
+                        break
+            except Exception:
+                continue
+                
+    if not target_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Target URL not found in script or configuration files."
+        )
+        
+    return target_url, actions, locator_refs
+
+
+def _parse_locator_configs(locator_files: List[str], log: EndpointLogger) -> Dict[str, Any]:
+    """Parse all identified locator configurations into a normalized dictionary."""
+    log.info("[STEP 3] Normalizing locator configurations...")
+    combined_locators = {}
+    
+    for loc_file in locator_files:
+        try:
+            parsed = LocatorParser.parse_file(loc_file)
+            normalized = LocatorParser.normalize_locator_data(parsed)
+            
+            if len(combined_locators) + len(normalized) > MAX_LOCATOR_COUNT:
+                log.warning("Max locator limit reached. Skipping additional configurations.")
+                break
+                
+            combined_locators.update(normalized)
+        except Exception as e:
+            log.error(f"Failed to parse locator file {os.path.basename(loc_file)}: {e}")
+            
+    return combined_locators
+
+
+def _run_selenium_extraction(url: str, actions: List, locators: Dict, refs: List[str], log: EndpointLogger):
+    """Execution Selenium to extract live HTML fields from the target URL."""
+    log.info("[STEP 4] Starting live field extraction via Selenium...")
+    
+    with HTMLFieldExtractor() as extractor:
+        # Wrap the extractor's internal logs into our endpoint logger
+        def callback(msg): log.info(f"[EXTRACTOR] {msg}")
+        
+        page_sources, all_fields = extractor.navigate_and_extract(
+            url=url,
+            actions=actions,
+            locators=locators,
+            max_pages=MAX_FORM_PAGES,
+            log_callback=callback
+        )
+        
+        # Link fields specifically referenced in the script
+        fields_by_locator = {}
+        if locators and refs:
+            combined_html = '\n'.join(page_sources)
+            found_by_loc = extractor.extract_fields_by_locators(combined_html, locators, refs)
+            
+            for loc_key, matches in found_by_loc.items():
+                if matches:
+                    field = matches[0]
+                    field['is_verified_locator'] = True
+                    field['locator_key'] = loc_key
+                    fields_by_locator[loc_key] = matches
+                    all_fields.insert(0, field)  # Prioritize verified fields
+        
+        deduplicated = extractor.deduplicate_fields(all_fields)
+        return page_sources, deduplicated, fields_by_locator
+
+
+def _generate_ai_schema(fields: List[Dict], model: str, log: EndpointLogger) -> Tuple[List, bool, List]:
+    """Use AI or Rule-based logic to convert raw fields into a structured schema."""
+    log.info(f"[STEP 5] Generating schema using {model}...")
+    
+    try:
+        llm = LLMFactory.create_llm(provider=model)
+        schema_gen = SchemaGenerator(llm=llm)
+        schema = schema_gen.generate_schema(fields, use_llm=True)
+    except Exception as e:
+        log.error(f"AI Generation failed: {e}. Falling back to rules.")
+        schema_gen = SchemaGenerator(llm=None)
+        schema = schema_gen.generate_schema(fields, use_llm=False)
+        
+    # Standard cleanup and metadata merging
+    schema = schema_gen.deduplicate_schema(schema)
+    schema = schema_gen.merge_field_metadata(schema, fields)
+    
+    is_valid, errors = schema_gen.validate_schema(schema)
+    return schema, is_valid, errors
+
 
 def _prepare_consolidated_fields(fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Prepare consolidated field list with only essential information for frontend.
-    """
-    consolidated = []
-    
-    for field in fields:
-        consolidated_field = {
-            'name': field.get('name', ''),
-            'id': field.get('id', ''),
-            'type': field.get('detected_type', field.get('type', 'string')),
-            'label': field.get('label', ''),
-            'placeholder': field.get('placeholder', ''),
-            'required': field.get('required', False),
+    """Filter raw field attributes to only those necessary for the frontend UI."""
+    return [
+        {
+            'name': f.get('name', ''),
+            'id': f.get('id', ''),
+            'type': f.get('detected_type', f.get('type', 'string')),
+            'label': f.get('label', ''),
+            'placeholder': f.get('placeholder', ''),
+            'required': f.get('required', False),
+            'options': f.get('options'),
+            'locator_key': f.get('locator_key')
         }
-        
-        # Add options for select fields
-        if field.get('options'):
-            consolidated_field['options'] = field['options']
-        
-        # Add locator info if available
-        if field.get('locator_key'):
-            consolidated_field['locator_key'] = field['locator_key']
-        
-        consolidated.append(consolidated_field)
-    
-    return consolidated
+        for f in fields
+    ]

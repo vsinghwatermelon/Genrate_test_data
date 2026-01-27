@@ -1,27 +1,49 @@
 """
-Field Extraction Utilities
+Field Extraction Logic Hub
 
-Provides reusable functions for extracting and normalizing form field data
-from HTML elements with automatic type detection and label extraction.
+Core utilities for analyzing, normalizing, and classifying form fields extracted
+from HTML. This module serves as the central logic hub for the extraction suite,
+providing the rules and heuristics for identifying field types, generating labels,
+and synthesizing validation metadata.
 """
 
 import re
+import logging
 from typing import Dict, List, Optional, Any
 from bs4 import BeautifulSoup, Tag
 
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# SECTION 1: STRING NORMALIZATION
+# ============================================================================
 
 def to_snake_case(name: str) -> Optional[str]:
-    """Convert a string to snake_case format."""
+    """
+    Convert a string to snake_case format.
+    
+    Commonly used for generating clean field identifiers from raw labels or attributes.
+    """
     if not name:
         return None
     s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
     s2 = re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1)
-    return s2.replace('-', '_').replace(' ', '_').lower()
+    return s2.replace('-', '_').replace(' ', '_').replace(':', '').lower()
 
 
 def normalize_field_name(field: Dict[str, Any]) -> str:
-    """Extract and normalize field name from various possible sources."""
-    # Prioritize label for better field names, then fall back to other attributes
+    """
+    Synthesize a clean identifier for a form field.
+    
+    Heuristic Priority:
+    1. Human-readable label
+    2. Placeholder text
+    3. ARIA accessibility labels
+    4. Technical name attribute
+    5. HTML ID attribute
+    """
+    # Prefer descriptive UI text over technical attributes
     name = (
         field.get('label') or
         field.get('placeholder') or
@@ -30,19 +52,28 @@ def normalize_field_name(field: Dict[str, Any]) -> str:
         field.get('id') or 
         ''
     )
-    # Clean up common suffixes that aren't helpful
+    
     if name:
-        # Remove common input field suffixes and prefixes
-        name = re.sub(r'^(input|select|field)[-_]', '', name, flags=re.IGNORECASE)
-        name = re.sub(r'[-_](input|select|field|id)$', '', name, flags=re.IGNORECASE)
+        # Strip common clutter prefixes like "input_" or "txt_"
+        name = re.sub(r'^(input|select|field|txt|id)[-_]', '', name, flags=re.IGNORECASE)
+        # Strip common clutter suffixes
+        name = re.sub(r'[-_](input|select|field|id|box|wrapper)$', '', name, flags=re.IGNORECASE)
+        
     return to_snake_case(name) if name else 'unknown_field'
 
 
+# ============================================================================
+# SECTION 2: FIELD CLASSIFICATION
+# ============================================================================
+
 def detect_field_type(field: Dict[str, Any]) -> str:
     """
-    Detect field type from HTML attributes and context.
+    Infer the semantic type of a field based on its attributes and context.
     
-    Supports: email, phone, number, date, checkbox, radio, select, combobox, textarea, string
+    Detects specific patterns for:
+    - email, phone, number, date (Dynamic Data)
+    - checkbox, radio, select (Choice Components)
+    - textarea, combobox, string (Text Components)
     """
     input_type = (field.get('type') or '').lower()
     tag = (field.get('tag') or '').lower()
@@ -50,17 +81,17 @@ def detect_field_type(field: Dict[str, Any]) -> str:
     name = (field.get('name') or field.get('id') or '').lower()
     placeholder = (field.get('placeholder') or '').lower()
     
-    # Type-based detection
+    # Priority 1: Direct Type Evidence
     if input_type == 'email' or 'email' in name or 'email' in placeholder:
         return 'email'
     
     if input_type in ['tel', 'phone'] or 'mobile' in name or 'phone' in name:
         return 'phone'
     
-    if input_type == 'number' or 'amount' in name or 'income' in name:
+    if input_type == 'number' or any(kw in name for kw in ['amount', 'income', 'salary', 'price']):
         return 'number'
     
-    if input_type == 'date' or input_type == 'datetime-local' or 'date' in name or 'dob' in name:
+    if input_type in ['date', 'datetime-local'] or any(kw in name for kw in ['date', 'dob', 'birthday']):
         return 'date'
     
     if input_type == 'checkbox':
@@ -69,102 +100,92 @@ def detect_field_type(field: Dict[str, Any]) -> str:
     if input_type == 'radio':
         return 'radio'
     
-    # Tag-based detection
-    if tag == 'select' or input_type == 'select':
+    # Priority 2: Tag-Based Inference
+    if tag == 'select' or input_type == 'select' or 'select' in name:
         return 'select'
     
     if tag == 'textarea':
         return 'textarea'
     
-    # Role-based detection
+    # Priority 3: Role and ARIA Inference
     if 'combobox' in role or 'combobox' in input_type:
         return 'combobox'
     
-    # Default to string for text inputs
     return 'string'
 
 
+# ============================================================================
+# SECTION 3: HTML EXTRACTION LOGIC
+# ============================================================================
+
 def extract_element_label(element: Tag, soup: BeautifulSoup) -> Optional[str]:
     """
-    Extract label for a form element using multiple strategies.
+    Attempt to find the most accurate human-readable label for a field.
     
-    Strategies:
-    1. Direct <label> with matching 'for' attribute
-    2. Parent <label> element
-    3. aria-label attribute
-    4. placeholder attribute
-    5. Nearby text content
-    6. Associated legend (for fieldsets)
+    Employs 8 strategies ranging from targeted <label for="..."> checks 
+    to nearby text proximity analysis.
     """
     if not element:
         return None
     
     element_id = element.get('id')
-    element_name = element.get('name')
     
-    # Strategy 1: Direct label with 'for' attribute
+    # Strategy 1: Explicit <label for="ID">
     if element_id:
         label = soup.find('label', {'for': element_id})
         if label:
             text = label.get_text(strip=True)
             if text:
-                return text.replace('*', '').strip()
+                return _clean_label_text(text)
     
-    # Strategy 2: Parent label
+    # Strategy 2: Implicit parent <label>
     parent_label = element.find_parent('label')
     if parent_label:
-        # Extract only the label text, not nested input values
         text = parent_label.get_text(strip=True)
         if text:
-            return text.replace('*', '').strip()
+            return _clean_label_text(text)
     
-    # Strategy 3: aria-label
-    aria_label = element.get('aria-label')
-    if aria_label:
-        return aria_label.strip()
+    # Strategy 3: Standard ARIA Labeling
+    for attr in ['aria-label', 'placeholder', 'title']:
+        val = element.get(attr)
+        if val:
+            return val.strip()
     
-    # Strategy 4: aria-labelledby
+    # Strategy 4: aria-labelledby reference
     aria_labelledby = element.get('aria-labelledby')
     if aria_labelledby:
         label_elem = soup.find(id=aria_labelledby)
         if label_elem:
             text = label_elem.get_text(strip=True)
             if text:
-                return text.replace('*', '').strip()
+                return _clean_label_text(text)
     
-    # Strategy 5: placeholder
-    placeholder = element.get('placeholder')
-    if placeholder:
-        return placeholder.strip()
+    # Strategy 5: Text Proximity (Previous sibling)
+    if element.previous_sibling and isinstance(element.previous_sibling, str):
+        text = element.previous_sibling.strip()
+        if text:
+            return _clean_label_text(text)
     
-    # Strategy 6: title attribute
-    title = element.get('title')
-    if title:
-        return title.strip()
-    
-    # Strategy 7: Nearby text (previous sibling or parent)
-    if element.previous_sibling:
-        if isinstance(element.previous_sibling, str):
-            text = element.previous_sibling.strip()
-            if text:
-                return text.replace('*', '').strip()
-    
-    # Strategy 8: Associated legend (for radio/checkbox groups)
+    # Strategy 6: Fieldset Legend
     fieldset = element.find_parent('fieldset')
     if fieldset:
         legend = fieldset.find('legend')
         if legend:
             text = legend.get_text(strip=True)
             if text:
-                return text.replace('*', '').strip()
+                return _clean_label_text(text)
     
     return None
 
 
+def _clean_label_text(text: str) -> str:
+    """Strip clutter from raw label text (e.g., required asterisks)."""
+    return text.replace('*', '').strip()
+
+
 def extract_select_options(element: Tag) -> List[Dict[str, str]]:
-    """Extract options from a select element or combobox."""
+    """Record available options for selection-based components."""
     options = []
-    
     if element.name == 'select':
         for option in element.find_all('option'):
             value = option.get('value', '')
@@ -174,53 +195,46 @@ def extract_select_options(element: Tag) -> List[Dict[str, str]]:
                     'value': value,
                     'label': label or value
                 })
-    
     return options
 
 
 def is_visible_field(element: Tag) -> bool:
-    """Check if a form field is visible (not hidden) with higher robustness."""
+    """Robust check to exclude hidden or decorative input elements."""
     input_type = (element.get('type') or '').lower()
     style = (element.get('style') or '').lower()
     
-    # Hidden input type
     if input_type == 'hidden':
         return False
     
-    # Check for style-based hiding
-    style_patterns = [
-        'display:none', 'display: none',
-        'visibility:hidden', 'visibility: hidden',
-        'opacity:0', 'opacity: 0',
-        'width:0', 'height:0', 'height: 0', 'width: 0'
-    ]
-    if any(p in style.replace(' ', '') for p in style_patterns):
+    # Style-based hiding patterns
+    hiding_patterns = ['display:none', 'visibility:hidden', 'opacity:0', 'height:0', 'width:0']
+    clean_style = style.replace(' ', '')
+    if any(p in clean_style for p in hiding_patterns):
         return False
     
-    # Check for aria-hidden
+    # Accessibility-based hiding
     if element.get('aria-hidden') == 'true':
         return False
 
-    # Hidden class names (common patterns)
+    # Common CSS class-based hiding
     classes = element.get('class', [])
-    if isinstance(classes, list):
-        hidden_classes = ['hidden', 'hide', 'd-none', 'invisible', 'sr-only', 'visually-hidden']
-        if any(hc in classes for hc in hidden_classes):
-            return False
+    hidden_classes = {'hidden', 'hide', 'd-none', 'invisible', 'sr-only', 'visually-hidden'}
+    if isinstance(classes, list) and any(hc in classes for hc in hidden_classes):
+        return False
     
     return True
 
 
+# ============================================================================
+# SECTION 4: SYNTHESIS & METADATA
+# ============================================================================
+
 def extract_field_info(element: Tag, soup: BeautifulSoup) -> Dict[str, Any]:
     """
-    Extract comprehensive field information from an HTML element.
+    Construct a comprehensive metadata snapshot of a form field.
     
-    Returns a dictionary with field metadata including:
-    - name, id, type, tag
-    - label, placeholder
-    - required, disabled, readonly
-    - options (for select/combobox)
-    - validation attributes
+    Captures technical attributes, semantic classification, labels, 
+    and surrounding UI context.
     """
     field_info = {
         'tag': element.name,
@@ -233,140 +247,118 @@ def extract_field_info(element: Tag, soup: BeautifulSoup) -> Dict[str, Any]:
         'disabled': element.get('disabled') is not None,
         'readonly': element.get('readonly') is not None,
         'role': element.get('role'),
-        'aria-label': element.get('aria-label'),
     }
     
-    # Extract surrounding context (semantic text nearby)
+    # Capture parent context (nearby text clues)
     parent = element.find_parent(['div', 'section', 'td', 'tr', 'li'])
     if parent:
-        # Get all text in the parent container minus the element's own value/text
-        nearby_text = parent.get_text(separator=' ', strip=True)
-        # Limit to 200 chars to avoid prompt bloat
-        field_info['nearby_context'] = nearby_text[:200]
+        nearby = parent.get_text(separator=' ', strip=True)
+        field_info['nearby_context'] = nearby[:200]
     
-    # Extract label
     field_info['label'] = extract_element_label(element, soup)
     
-    # Extract validation attributes
-    field_info['pattern'] = element.get('pattern')
-    field_info['min'] = element.get('min')
-    field_info['max'] = element.get('max')
-    field_info['minlength'] = element.get('minlength')
-    field_info['maxlength'] = element.get('maxlength')
-    field_info['step'] = element.get('step')
+    # Store native HTML validation constraints
+    for attr in ['pattern', 'min', 'max', 'minlength', 'maxlength', 'step']:
+        field_info[attr] = element.get(attr)
     
-    # Extract options for select elements
     if element.name == 'select':
         field_info['options'] = extract_select_options(element)
     
-    # Detect field type
+    # Classify the final semantic type
     field_info['detected_type'] = detect_field_type(field_info)
     
     return field_info
 
 
 def generate_validation_rules(field: Dict[str, Any]) -> str:
-    """Generate human-readable validation rules from field metadata."""
+    """Translate raw HTML constraints into human-readable rule summaries."""
     rules = []
     field_type = field.get('detected_type', field.get('type', 'string'))
     
-    # Type-specific rules
-    if field_type == 'email':
-        rules.append('Must be a valid email address')
-    elif field_type == 'phone':
-        rules.append('Must be a valid phone number')
-    elif field_type == 'number':
-        if field.get('min'):
-            rules.append(f"Minimum value: {field['min']}")
-        if field.get('max'):
-            rules.append(f"Maximum value: {field['max']}")
-    elif field_type == 'date':
-        rules.append('Must be a valid date (DD/MM/YYYY or YYYY-MM-DD)')
+    # Semantic type rules
+    type_rules = {
+        'email': 'Must be a valid email address',
+        'phone': 'Must be a valid phone number',
+        'date': 'Must be a valid date format',
+    }
+    if field_type in type_rules:
+        rules.append(type_rules[field_type])
     
-    # Required field
+    # Value constraints
+    if field_type == 'number':
+        if field.get('min'): rules.append(f"Min: {field['min']}")
+        if field.get('max'): rules.append(f"Max: {field['max']}")
+    
+    # Mandatory status
     if field.get('required'):
         rules.append('Required field')
     
-    # Length constraints
-    if field.get('minlength'):
-        rules.append(f"Minimum length: {field['minlength']} characters")
-    if field.get('maxlength'):
-        rules.append(f"Maximum length: {field['maxlength']} characters")
+    # Length & Pattern
+    if field.get('minlength'): rules.append(f"Min length: {field['minlength']}")
+    if field.get('maxlength'): rules.append(f"Max length: {field['maxlength']}")
+    if field.get('pattern'): rules.append(f"Pattern: {field['pattern']}")
     
-    # Pattern validation
-    if field.get('pattern'):
-        rules.append(f"Must match pattern: {field['pattern']}")
-    
-    # Options for select/combobox
-    if field_type in ['select', 'combobox', 'radio'] and field.get('options'):
-        options_text = ', '.join([opt.get('label', '') for opt in field['options'][:5]])
+    # Options summary
+    if field.get('options'):
+        opts = [o.get('label', '') for o in field['options'][:5]]
+        text = f"Choices: {', '.join(opts)}"
         if len(field['options']) > 5:
-            options_text += f", ... ({len(field['options'])} total options)"
-        rules.append(f"Options: {options_text}")
+            text += f" (+{len(field['options'])-5} more)"
+        rules.append(text)
     
-    return ' | '.join(rules) if rules else 'Enter a valid value'
+    return ' | '.join(rules) if rules else 'Enter valid input'
 
 
 def generate_example_value(field: Dict[str, Any]) -> Any:
-    """Generate a realistic example value based on field type."""
+    """Produce a representative example value for documentation and testing."""
     field_type = field.get('detected_type', field.get('type', 'string'))
     name = (field.get('name') or field.get('id') or '').lower()
     
-    # Check for existing value
     if field.get('value'):
         return field['value']
     
-    # Type-specific examples
-    if field_type == 'email':
-        return 'john.doe@example.com'
-    elif field_type == 'phone':
-        return '9876543210'
-    elif field_type == 'number':
-        if 'age' in name:
-            return 30
-        elif 'amount' in name or 'income' in name:
-            return 50000
-        elif 'pincode' in name or 'zip' in name:
-            return '400001'
-        return 100
-    elif field_type == 'date':
-        return '01/01/1990'
-    elif field_type == 'checkbox':
-        return True
-    elif field_type in ['select', 'combobox', 'radio']:
+    # Generic type examples
+    standard_examples = {
+        'email': 'john.doe@example.com',
+        'phone': '1234567890',
+        'date': '01/01/1990',
+        'checkbox': True,
+        'textarea': 'A descriptive block of text.',
+    }
+    
+    if field_type in standard_examples:
+        return standard_examples[field_type]
+    
+    if field_type == 'number':
+        return 50000 if any(k in name for k in ['amount', 'salary']) else 25
+    
+    if field_type in ['select', 'radio', 'combobox']:
         options = field.get('options', [])
-        if options:
-            return options[0].get('label', 'Option 1')
-        return 'Option 1'
-    elif field_type == 'textarea':
-        return 'Sample text content'
-    else:
-        # String field - context-aware examples
-        if 'name' in name:
-            return 'John Doe'
-        elif 'address' in name:
-            return '123 Main Street'
-        elif 'city' in name:
-            return 'Mumbai'
-        elif 'state' in name:
-            return 'Maharashtra'
-        elif 'country' in name:
-            return 'India'
-        return 'sample_value'
+        return options[0].get('label', 'Sample Option') if options else 'Option 1'
+
+    # Context-aware string examples
+    name_clues = {
+        'name': 'John Doe',
+        'address': '123 Innovation Drive',
+        'city': 'Mumbai',
+        'state': 'Maharashtra',
+        'country': 'India',
+        'zip': '400001',
+    }
+    for clue, example in name_clues.items():
+        if clue in name:
+            return example
+            
+    return 'sample_value'
 
 
 def calculate_confidence(field: Dict[str, Any]) -> float:
-    """Calculate confidence score for field extraction (0.0 to 1.0)."""
-    confidence = 0.6  # Base confidence
+    """Grade the reliability of the extraction on a scale of 0.0 to 1.0."""
+    score = 0.5  # Neutral starting point
     
-    # Boost confidence based on available metadata
-    if field.get('label'):
-        confidence += 0.15
-    if field.get('name') or field.get('id'):
-        confidence += 0.10
-    if field.get('type') and field['type'] != 'text':
-        confidence += 0.10
-    if field.get('required'):
-        confidence += 0.05
+    if field.get('label'): score += 0.2
+    if field.get('name') or field.get('id'): score += 0.1
+    if field.get('detected_type') not in ['string', 'text']: score += 0.1
+    if field.get('required'): score += 0.1
     
-    return min(confidence, 1.0)
+    return min(score, 1.0)

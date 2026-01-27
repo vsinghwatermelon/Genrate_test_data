@@ -147,6 +147,7 @@ class SeleniumScriptExecutor:
             
             # Convert each locator strategy to (By type, value) tuple
             paths = []
+            seen = set()
             for strategy, value in locator_value.items():
                 # Normalize strategy name (e.g., "CSS" -> "CSS_SELECTOR")
                 normalized = strategy.upper().replace(' ', '_')
@@ -159,7 +160,11 @@ class SeleniumScriptExecutor:
                 if by_type:
                     # Support both single values and lists
                     values = value if isinstance(value, list) else [value]
-                    paths.extend((by_type, v) for v in values)
+                    for v in values:
+                        pair = (by_type, str(v))
+                        if pair not in seen:
+                            paths.append(pair)
+                            seen.add(pair)
             
             selenium_locators[locator_id] = paths
         
@@ -196,12 +201,26 @@ class SeleniumScriptExecutor:
             try:
                 parsed = LocatorParser.parse_file(source_file)
                 if parsed:
-                    converted = SeleniumScriptExecutor._convert_to_selenium_format(parsed)
+                    # Flatten: if parsed is {'locators': {...}}, we want the contents
+                    to_merge = {}
+                    for k, v in parsed.items():
+                        if isinstance(v, dict) and any(ik in str(v.keys()) for ik in ['xpath', 'css', 'id']):
+                            # It's a single locator definition
+                            to_merge[k] = v
+                        elif isinstance(v, dict):
+                            # It's a dictionary of locators (like 'locators = { ... }')
+                            to_merge.update(v)
+                        else:
+                            # Scalar value, probably a constant
+                            to_merge[k] = v
+                    
+                    converted = SeleniumScriptExecutor._convert_to_selenium_format(to_merge)
                     locators_dict.update(converted)
+                    
                     if converted:
                         print(f"[LOCATORS]   ✓ {len(converted)} locators from {os.path.basename(source_file)}")
-            except Exception:
-                # Silently skip files that can't be parsed
+            except Exception as e:
+                logger.debug(f"Skipping locator source {source_file}: {e}")
                 continue
         
         print(f"[LOCATORS] ✓ Loaded {len(locators_dict)} unique locators total\n")
@@ -410,10 +429,10 @@ class SeleniumScriptExecutor:
         
         all_requests = real_driver.requests
         print(f"[API COLLECTION] Total requests captured: {len(all_requests)}")
-        print(f"[API COLLECTION] Click events tracked: {len(tracker.click_events)}")
+        print(f"[API COLLECTION] Click events tracked: {len(tracker.clicked_elements)}")
         
         # Can't associate APIs without click events
-        if not tracker.click_events:
+        if not tracker.clicked_elements:
             print(f"[API COLLECTION] ⚠️  No clicks detected - skipping API capture")
             return 0, 0
         
@@ -443,14 +462,18 @@ class SeleniumScriptExecutor:
             if not is_api:
                 continue
             
-            # Get API timestamp (use response Date header if available)
-            api_timestamp = time.time()
+            # Get API timestamp (prioritize internal capturing timestamp)
             try:
-                if request.response.headers.get('Date'):
-                    from email.utils import parsedate_to_datetime
-                    api_timestamp = parsedate_to_datetime(request.response.headers['Date']).timestamp()
+                api_timestamp = request.date.timestamp()
             except Exception:
-                pass
+                api_timestamp = time.time()
+                # Fallback to response Date header if available
+                try:
+                    if request.response.headers.get('Date'):
+                        from email.utils import parsedate_to_datetime
+                        api_timestamp = parsedate_to_datetime(request.response.headers['Date']).timestamp()
+                except Exception:
+                    pass
             
             # Find which click triggered this API
             associated_click = tracker.find_associated_click(api_timestamp)
@@ -473,7 +496,8 @@ class SeleniumScriptExecutor:
                     response_code=request.response.status_code,
                     response_body=response_body,
                     triggered_by=associated_click["locator"],
-                    time_after_click=associated_click["time_after_click"]
+                    time_after_click=associated_click["time_after_click"],
+                    trigger_details=associated_click
                 )
                 captured_count += 1
             else:
@@ -523,7 +547,6 @@ class SeleniumScriptExecutor:
                 - error: Error message if success=False
         """
         driver = None
-        tracker = SeleniumActionTracker()
         original_sys_path = None
         script_dir = None
         
@@ -534,6 +557,9 @@ class SeleniumScriptExecutor:
             
             # Load all locator definitions from the uploaded folder
             locators_dict = SeleniumScriptExecutor._load_locators_from_folder(folder_path)
+            
+            # Initialize tracker with discovered locators
+            tracker = SeleniumActionTracker(all_locators=locators_dict)
             
             # Create Chrome WebDriver
             print(f"[DRIVER SETUP] Initializing Chrome (headless={headless}, API interception={use_wire})...")
@@ -556,6 +582,10 @@ class SeleniumScriptExecutor:
             # Set up driver interception and tracking
             proxy_driver, original_constructors = \
                 SeleniumScriptExecutor._setup_driver_interception(driver, tracker)
+            
+            # Attach merged locators to the driver for patch visibility
+            proxy_driver._locators = locators_dict
+            driver._locators = locators_dict # Original driver too
             
             # Create script execution namespace
             exec_namespace = SeleniumScriptExecutor._create_execution_namespace(proxy_driver, script_path)
@@ -586,6 +616,10 @@ class SeleniumScriptExecutor:
             # Collect API calls if selenium-wire is enabled
             if use_wire:
                 SeleniumScriptExecutor._collect_api_calls(driver, tracker)
+            
+            # Universal Page Inventory scan (track all elements)
+            print("[SUMMARY] Capturing full page inventory...")
+            tracker.track_page_inventory(driver)
             
             # Restore original modules
             for module_name, module_obj in original_modules.items():

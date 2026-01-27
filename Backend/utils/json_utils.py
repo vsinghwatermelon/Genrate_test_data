@@ -7,7 +7,9 @@ for handling LLM responses that may have formatting issues.
 
 import json
 import re
-from typing import Optional, List, Dict, Any, Union
+import gzip
+import base64
+from typing import Optional, List, Dict, Any, Union, Tuple, Set
 
 # Constants
 MAX_REPAIR_ATTEMPTS = 5  # Maximum number of repair attempts
@@ -507,3 +509,73 @@ def parse_llm_json_response(
             f"Failed to parse JSON: {e.msg} at position {e.pos}\n"
             f"Context: ...{error_context}..."
         )
+
+
+def make_json_serializable(obj: Any) -> Any:
+    """
+    Convert non-JSON-serializable objects to JSON-compatible types.
+    
+    Handles complex nested structures and various data types:
+    - bytes: Attempts gzip decompression, UTF-8 decoding, JSON parsing, or base64 encoding
+    - dict: Recursively converts all values
+    - list: Recursively converts all items
+    - tuple: Converts to list of serializable items
+    - set: Converts to list of serializable items
+    
+    Args:
+        obj: Object to convert (can be any type)
+        
+    Returns:
+        JSON-serializable version of the object
+    """
+    if isinstance(obj, bytes):
+        return _serialize_bytes(obj)
+    elif isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(i) for i in obj]
+    elif isinstance(obj, (tuple, set)):
+        return [make_json_serializable(i) for i in obj]
+    else:
+        return obj
+
+
+def _serialize_bytes(data: bytes) -> Union[str, Dict, List]:
+    """
+    Serialize bytes to string using best available method.
+    
+    Attempts multiple strategies in order:
+    1. Gzip decompression (if gzip magic bytes detected)
+    2. UTF-8 decoding
+    3. JSON parsing (if decoded string looks like JSON)
+    4. Base64 encoding (fallback for binary data)
+    """
+    # Strategy 1: Check for gzip compression (magic bytes: 0x1f 0x8b)
+    if len(data) > 2 and data[0:2] == b'\x1f\x8b':
+        try:
+            data = gzip.decompress(data)
+        except Exception:
+            pass
+    
+    # Strategy 2: Try UTF-8 decoding
+    try:
+        decoded = data.decode('utf-8')
+        
+        # Strategy 3: If it looks like JSON, parse it
+        if decoded.strip().startswith(('{', '[')):
+            try:
+                return json.loads(decoded)
+            except json.JSONDecodeError:
+                pass
+        
+        return decoded
+        
+    except UnicodeDecodeError:
+        # Strategy 4: Base64 encoding for binary data
+        b64 = base64.b64encode(data).decode('ascii')
+        
+        # Truncate if too long for readability
+        if len(b64) > 200:
+            return f"[Binary: {len(data)} bytes, base64 preview: {b64[:200]}...]"
+        
+        return f"[Binary: {len(data)} bytes, base64: {b64}]"

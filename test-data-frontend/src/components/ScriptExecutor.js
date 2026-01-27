@@ -111,7 +111,11 @@ function ScriptExecutor({ onSchemaGenerated }) {
             }
 
             const result = await response.json();
-            console.log('Execution result:', result);
+            console.log('🚀 Script Execution API Result:', result);
+            if (result.data?.tracked_actions) {
+                console.log('📦 Tracked Actions Summary:', result.data.tracked_actions.summary);
+                console.log('🔍 First API Call Sample:', result.data.tracked_actions.api_calls?.[0]);
+            }
 
             setExecutionResult(result.data);
         } catch (err) {
@@ -385,13 +389,97 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                     </div>
                                     <div className="card-label">Field Inputs</div>
                                 </div>
+                                <div className="summary-card" style={{ background: 'linear-gradient(135deg, #f39c12 0%, #d35400 100%)' }}>
+                                    <div className="card-value">
+                                        {executionResult.tracked_actions.total_skips || 0}
+                                    </div>
+                                    <div className="card-label">Total Skips</div>
+                                </div>
+                                <div className="summary-card" style={{ background: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)' }}>
+                                    <div className="card-value">
+                                        {executionResult.tracked_actions.total_locators_found || 0}
+                                    </div>
+                                    <div className="card-label">Locators Found</div>
+                                </div>
+                                <div className="summary-card" style={{ background: 'linear-gradient(135deg, #27ae60 0%, #2ecc71 100%)' }}>
+                                    <div className="card-value">
+                                        {executionResult.tracked_actions.total_inventory_count || 0}
+                                    </div>
+                                    <div className="card-label">Page Inventory</div>
+                                </div>
                                 <div className="summary-card">
                                     <div className="card-value">
-                                        {executionResult.tracked_actions.summary?.total_api_calls || 0}
+                                        {executionResult.total_api_calls || executionResult.tracked_actions.summary?.total_api_calls || 0}
                                     </div>
                                     <div className="card-label">API Calls</div>
                                 </div>
                             </div>
+
+                            {executionResult.tracked_actions.all_locators && Object.keys(executionResult.tracked_actions.all_locators).length > 0 && (
+                                <div className="actions-section" style={{ marginTop: '30px' }}>
+                                    <h4>📚 Discovery Library</h4>
+                                    <p style={{ fontSize: '13px', color: '#7f8c8d', marginBottom: '15px' }}>
+                                        The following {Object.keys(executionResult.tracked_actions.all_locators).length} locators were discovered across the uploaded package.
+                                    </p>
+                                    <div className="locators-audit-grid" style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                                        gap: '12px'
+                                    }}>
+                                        {Object.entries(executionResult.tracked_actions.all_locators).map(([key, value], idx) => (
+                                            <div key={idx} className="locator-audit-card" style={{
+                                                padding: '12px',
+                                                background: '#f8f9fa',
+                                                borderRadius: '10px',
+                                                border: '1px solid #e9ecef',
+                                                fontSize: '12px',
+                                                boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                                            }}>
+                                                <div style={{ fontWeight: 'bold', color: '#2c3e50', marginBottom: '6px', borderBottom: '1px solid #eee', paddingBottom: '4px' }}>
+                                                    {key}
+                                                </div>
+                                                <div style={{ color: '#2980b9', fontFamily: 'monospace', wordBreak: 'break-all', lineHeight: '1.4' }}>
+                                                    {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {executionResult.tracked_actions.page_inventory?.length > 0 && (
+                                <div className="actions-section" style={{ marginTop: '30px' }}>
+                                    <h4>🌐 Final Page Inventory</h4>
+                                    <p style={{ fontSize: '13px', color: '#7f8c8d', marginBottom: '15px' }}>
+                                        The following {executionResult.tracked_actions.page_inventory.length} interactive elements were discovered on the page at the end of execution.
+                                    </p>
+                                    <div className="locators-audit-grid" style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                                        gap: '12px'
+                                    }}>
+                                        {executionResult.tracked_actions.page_inventory.map((elem, idx) => (
+                                            <div key={idx} className="locator-audit-card" style={{
+                                                padding: '12px',
+                                                background: '#f1f2f6',
+                                                borderRadius: '10px',
+                                                border: '1px solid #ced6e0',
+                                                fontSize: '12px'
+                                            }}>
+                                                <div style={{ fontWeight: 'bold', color: '#2f3542', marginBottom: '4px' }}>
+                                                    {elem.tag_name?.toUpperCase()} : {elem.text?.substring(0, 30) || 'No Label'}
+                                                </div>
+                                                <div style={{ color: '#747d8c', marginBottom: '4px', fontSize: '11px' }}>
+                                                    {elem.exact_purpose || elem.semantic_type || 'Unknown Type'}
+                                                </div>
+                                                <div style={{ color: '#2980b9', fontFamily: 'monospace', wordBreak: 'break-all', opacity: 0.8 }}>
+                                                    {elem.locator}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {executionResult.tracked_actions.screenshots?.length > 0 && (
                                 <div className="screenshots-section">
@@ -787,90 +875,156 @@ function ScriptExecutor({ onSchemaGenerated }) {
 
                                         return (
                                             <div className="api-groups-container">
-                                                {Object.entries(apisByClick).map(([clickLocator, apis], groupIdx) => (
-                                                    <div key={groupIdx} className="api-group">
-                                                        <div className="api-group-header">
-                                                            <span className="api-group-icon">🖱️</span>
-                                                            <span className="api-group-title">
-                                                                Triggered by: <strong>{clickLocator}</strong>
-                                                            </span>
-                                                            <span className="api-group-count">
-                                                                {apis.length} API call{apis.length !== 1 ? 's' : ''}
-                                                            </span>
-                                                        </div>
+                                                {Object.entries(apisByClick).map(([clickLocator, apis], groupIdx) => {
+                                                    const firstCall = apis[0];
+                                                    const trigger = firstCall.trigger_details;
 
-                                                        <div className="api-group-items">
-                                                            {apis.map((call, idx) => (
-                                                                <div key={idx} className="action-item api-item">
-                                                                    <div className="action-header">
-                                                                        <span className="action-number">#{idx + 1}</span>
-                                                                        <span className={`method-badge method-${call.method.toLowerCase()}`}>
-                                                                            {call.method}
-                                                                        </span>
-                                                                        <span className="action-url" title={call.url}>
-                                                                            {call.url}
-                                                                        </span>
-                                                                        {call.response_code && (
-                                                                            <span className={`status-badge status-${String(call.response_code)[0]}xx`}>
-                                                                                {call.response_code}
-                                                                            </span>
-                                                                        )}
-                                                                        {call.time_after_click !== undefined && (
-                                                                            <span className="time-badge" title="Time after click">
-                                                                                ⏱️ +{call.time_after_click.toFixed(2)}s
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    <div className="action-details">
-                                                                        {/* Click Association Info */}
-                                                                        {call.triggered_by_click && call.time_after_click !== undefined && (
-                                                                            <div className="detail-section click-association">
-                                                                                <div className="detail-section-title">🎯 Click Association</div>
-                                                                                <div className="detail-row">
-                                                                                    <span className="detail-label">Triggered by:</span>
-                                                                                    <span className="detail-value" style={{ fontWeight: '600', color: '#e74c3c' }}>
-                                                                                        {call.triggered_by_click}
-                                                                                    </span>
-                                                                                </div>
-                                                                                <div className="detail-row">
-                                                                                    <span className="detail-label">Time after click:</span>
-                                                                                    <span className="detail-value">
-                                                                                        {call.time_after_click.toFixed(3)} seconds
-                                                                                    </span>
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-
-                                                                        {call.payload && (
-                                                                            <div className="detail-section">
-                                                                                <div className="detail-section-title">📦 Payload</div>
-                                                                                <div className="detail-row code-row">
-                                                                                    <pre className="detail-code">
-                                                                                        {typeof call.payload === 'object'
-                                                                                            ? JSON.stringify(call.payload, null, 2)
-                                                                                            : String(call.payload).substring(0, 500) + (String(call.payload).length > 500 ? '...' : '')}
-                                                                                    </pre>
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-                                                                        {call.response_body && (
-                                                                            <div className="detail-section">
-                                                                                <div className="detail-section-title">📥 Response</div>
-                                                                                <div className="detail-row code-row">
-                                                                                    <pre className="detail-code">
-                                                                                        {typeof call.response_body === 'object'
-                                                                                            ? JSON.stringify(call.response_body, null, 2)
-                                                                                            : String(call.response_body).substring(0, 500) + (String(call.response_body).length > 500 ? '...' : '')}
-                                                                                    </pre>
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
+                                                    return (
+                                                        <div key={groupIdx} className="api-group">
+                                                            <div className="api-group-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
+                                                                <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: '8px' }}>
+                                                                    <span className="api-group-icon">🖱️</span>
+                                                                    <span className="api-group-title">
+                                                                        Triggered by: <strong>{clickLocator}</strong>
+                                                                    </span>
+                                                                    <span className="api-group-count" style={{ marginLeft: 'auto' }}>
+                                                                        {apis.length} API call{apis.length !== 1 ? 's' : ''}
+                                                                    </span>
                                                                 </div>
-                                                            ))}
+
+                                                                {/* Rich Semantic Trigger Info */}
+                                                                {trigger && (
+                                                                    <div className="trigger-metadata" style={{
+                                                                        width: '100%',
+                                                                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                                                                        padding: '12px',
+                                                                        borderRadius: '8px',
+                                                                        borderLeft: '4px solid #e74c3c'
+                                                                    }}>
+                                                                        {(trigger.exact_purpose || trigger.semantic_type) && (
+                                                                            <div className="detail-section semantic-insights" style={{ marginBottom: '10px' }}>
+                                                                                <div className="detail-section-title" style={{ color: '#e74c3c', fontSize: '13px', fontWeight: 'bold', marginBottom: '6px' }}>🧠 Semantic Insights</div>
+                                                                                {trigger.exact_purpose && (
+                                                                                    <div className="detail-row">
+                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Purpose:</span>
+                                                                                        <span className="detail-value" style={{ fontWeight: '600', color: '#2980b9', marginLeft: '8px' }}>{trigger.exact_purpose}</span>
+                                                                                    </div>
+                                                                                )}
+                                                                                {trigger.semantic_type && (
+                                                                                    <div className="detail-row">
+                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Type:</span>
+                                                                                        <span className="detail-value" style={{ marginLeft: '8px' }}><span className="field-type">{trigger.semantic_type}</span></span>
+                                                                                    </div>
+                                                                                )}
+                                                                                {trigger.role_description && (
+                                                                                    <div className="detail-row">
+                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Role:</span>
+                                                                                        <span className="detail-value" style={{ fontStyle: 'italic', fontSize: '12px', marginLeft: '8px' }}>{trigger.role_description}</span>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+
+                                                                        {trigger.context && Object.values(trigger.context).some(v => v) && (
+                                                                            <div className="detail-section page-context">
+                                                                                <div className="detail-section-title" style={{ color: '#e74c3c', fontSize: '13px', fontWeight: 'bold', marginBottom: '6px' }}>🌐 Page Context</div>
+                                                                                {trigger.context.container_heading && (
+                                                                                    <div className="detail-row">
+                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Section:</span>
+                                                                                        <span className="detail-value" style={{ marginLeft: '8px' }}>{trigger.context.container_heading}</span>
+                                                                                    </div>
+                                                                                )}
+                                                                                {trigger.context.label && (
+                                                                                    <div className="detail-row">
+                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Label:</span>
+                                                                                        <span className="detail-value" style={{ marginLeft: '8px' }}>{trigger.context.label}</span>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            <div className="api-group-items">
+                                                                {apis.map((call, idx) => (
+                                                                    <div key={idx} className="action-item api-item">
+                                                                        <div className="action-header">
+                                                                            <span className="action-number">#{idx + 1}</span>
+                                                                            <span className={`method-badge method-${call.method.toLowerCase()}`}>
+                                                                                {call.method}
+                                                                            </span>
+                                                                            <span className="action-url" title={call.url}>
+                                                                                {call.url}
+                                                                            </span>
+                                                                            {call.response_code && (
+                                                                                <span className={`status-badge status-${String(call.response_code)[0]}xx`}>
+                                                                                    {call.response_code}
+                                                                                </span>
+                                                                            )}
+                                                                            {call.time_after_click !== undefined && (
+                                                                                <span className="time-badge" title="Time after click">
+                                                                                    ⏱️ +{call.time_after_click.toFixed(2)}s
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="action-details">
+                                                                            {/* Click Association Info */}
+                                                                            {call.triggered_by_click && call.time_after_click !== undefined && (
+                                                                                <div className="detail-section click-association">
+                                                                                    <div className="detail-section-title">🎯 Click Association</div>
+                                                                                    <div className="detail-row">
+                                                                                        <span className="detail-label">Triggered by:</span>
+                                                                                        <span className="detail-value" style={{ fontWeight: '600', color: '#e74c3c' }}>
+                                                                                            {call.trigger_details?.exact_purpose || call.triggered_by_click}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    {call.trigger_details?.exact_purpose && call.trigger_details.locator && (
+                                                                                        <div className="detail-row" style={{ marginTop: '2px' }}>
+                                                                                            <span className="detail-label" style={{ fontSize: '11px', opacity: 0.7 }}>Locator:</span>
+                                                                                            <span className="detail-value" style={{ fontSize: '11px', opacity: 0.7 }}>{call.trigger_details.locator}</span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                    <div className="detail-row">
+                                                                                        <span className="detail-label">Time after click:</span>
+                                                                                        <span className="detail-value">
+                                                                                            {call.time_after_click.toFixed(3)} seconds
+                                                                                        </span>
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+
+                                                                            {call.payload && (
+                                                                                <div className="detail-section">
+                                                                                    <div className="detail-section-title">📦 Payload</div>
+                                                                                    <div className="detail-row code-row">
+                                                                                        <pre className="detail-code">
+                                                                                            {typeof call.payload === 'object'
+                                                                                                ? JSON.stringify(call.payload, null, 2)
+                                                                                                : String(call.payload).substring(0, 500) + (String(call.payload).length > 500 ? '...' : '')}
+                                                                                        </pre>
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+                                                                            {call.response_body && (
+                                                                                <div className="detail-section">
+                                                                                    <div className="detail-section-title">📥 Response</div>
+                                                                                    <div className="detail-row code-row">
+                                                                                        <pre className="detail-code">
+                                                                                            {typeof call.response_body === 'object'
+                                                                                                ? JSON.stringify(call.response_body, null, 2)
+                                                                                                : String(call.response_body).substring(0, 500) + (String(call.response_body).length > 500 ? '...' : '')}
+                                                                                        </pre>
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                         );
                                     })()}
@@ -889,15 +1043,49 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                     <p><strong>Script:</strong> {executionResult.script_name}</p>
                                     <p><strong>Target URL:</strong> {executionResult.target_url || 'Not found'}</p>
                                     <p><strong>Total Actions:</strong> {executionResult.total_actions}</p>
+                                    {executionResult.skipped_actions !== undefined && (
+                                        <p><strong>Skips:</strong> {executionResult.skipped_actions}</p>
+                                    )}
                                 </div>
                                 <div className="actions-list">
-                                    {executionResult.actions.map((action, idx) => (
-                                        <div key={idx} className="action-item analysis-item">
-                                            <span className="action-number">#{idx + 1}</span>
-                                            <span className="action-type">{action.action}</span>
-                                            <span className="action-locator">{action.locator}</span>
-                                        </div>
-                                    ))}
+                                    {executionResult.actions.map((action, idx) => {
+                                        const isSkipped = action.status === 'skipped' || (action.type && action.type.startsWith('skipped_'));
+                                        const actionType = isSkipped ? (action.type ? action.type.replace('skipped_', '') : 'action') : action.action || action.type;
+
+                                        return (
+                                            <div key={idx} className={`action-item ${actionType}-item ${isSkipped ? 'skipped-item' : ''}`}>
+                                                <div className="action-header">
+                                                    <span className="action-number">#{idx + 1}</span>
+                                                    <span className="action-type">
+                                                        {isSkipped ? '⚠️ SKIPPED ' : ''}{actionType}
+                                                    </span>
+                                                    <span className="action-locator">{action.locator}</span>
+                                                    {isSkipped && (
+                                                        <span className="status-badge status-4xx" style={{ marginLeft: 'auto' }}>
+                                                            NOT FOUND
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {isSkipped && (
+                                                    <div className="action-details" style={{ color: '#e67e22', fontStyle: 'italic', fontSize: '12px', padding: '10px' }}>
+                                                        Reason: {action.reason || 'Element not present on page'}
+                                                    </div>
+                                                )}
+                                                {action.details && !isSkipped && (
+                                                    <div className="action-details">
+                                                        {Object.entries(action.details).map(([key, value]) => (
+                                                            typeof value !== 'object' && (
+                                                                <div key={key} className="detail-row">
+                                                                    <span className="detail-label">{key}:</span>
+                                                                    <span className="detail-value">{String(value)}</span>
+                                                                </div>
+                                                            )
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )

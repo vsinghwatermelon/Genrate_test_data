@@ -1,11 +1,11 @@
 """
-Common utilities for all endpoints.
+Common Utilities for All Endpoints
 
-Centralizes repeated patterns across endpoint files including:
-- Zip file extraction and validation
-- LLM provider initialization with fallback
-- JSON parsing from LLM responses
+Centralizes repeated patterns across endpoint files to reduce code duplication
+and ensure consistent behavior for common operations like file handling and
+LLM initialization.
 """
+
 import logging
 import os
 import tempfile
@@ -16,14 +16,20 @@ from fastapi import UploadFile, HTTPException
 
 logger = logging.getLogger(__name__)
 
-# Constants
+# Configuration Constants
 MAX_UPLOAD_SIZE_MB = 100
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 
+# ============================================================================
+# FILE HANDLING
+# ============================================================================
+
 async def extract_zip_file(file: UploadFile, tmpdir: str) -> str:
     """
     Extract uploaded zip file to temporary directory with validation.
+    
+    Validates file size before extraction to prevent resource exhaustion.
     
     Args:
         file: Uploaded zip file from FastAPI
@@ -42,7 +48,7 @@ async def extract_zip_file(file: UploadFile, tmpdir: str) -> str:
     """
     zip_path = os.path.join(tmpdir, "upload.zip")
     
-    # Read and validate size
+    # Read and validate file size
     file_bytes = await file.read()
     file_size_mb = len(file_bytes) / 1024 / 1024
     
@@ -55,15 +61,15 @@ async def extract_zip_file(file: UploadFile, tmpdir: str) -> str:
     logger.info(f"Extracting zip file ({file_size_mb:.2f}MB)...")
     
     try:
-        # Write zip file
+        # Write zip to disk
         with open(zip_path, "wb") as f:
             f.write(file_bytes)
         
-        # Extract contents
+        # Extract all contents
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(tmpdir)
         
-        logger.info(f"Successfully extracted zip to {tmpdir}")
+        logger.info(f"Successfully extracted {file_size_mb:.2f}MB to {tmpdir}")
         return zip_path
         
     except zipfile.BadZipFile as e:
@@ -80,12 +86,17 @@ async def extract_zip_file(file: UploadFile, tmpdir: str) -> str:
         )
 
 
+# ============================================================================
+# LLM INTEGRATION
+# ============================================================================
+
 def get_llm_with_fallback(preferred_provider: str = "groq") -> Any:
     """
     Get LLM instance with automatic fallback to ollama.
     
-    Centralizes the LLM initialization pattern used across multiple endpoints.
-    Tries the preferred provider first, automatically falls back to ollama if it fails.
+    Centralizes LLM initialization pattern used across multiple endpoints.
+    Tries the preferred provider first, automatically falls back to ollama
+    if initialization fails (e.g., API key missing, service unreachable).
     
     Args:
         preferred_provider: Preferred LLM provider (default: "groq")
@@ -95,7 +106,7 @@ def get_llm_with_fallback(preferred_provider: str = "groq") -> Any:
         
     Example:
         >>> llm = get_llm_with_fallback("groq")
-        >>> response = llm.generate("What is 2+2?")
+        >>> response = llm.invoke("What is 2+2?")
     """
     try:
         from llm_factory import LLMFactory
@@ -111,58 +122,19 @@ def get_llm_with_fallback(preferred_provider: str = "groq") -> Any:
         return LLMFactory.create_llm(provider="ollama")
 
 
-def parse_llm_json_response(response_text: str) -> Dict[str, Any]:
-    """
-    Robustly parse JSON from LLM response.
-    
-    Handles markdown code blocks (```json ... ```) and validates structure.
-    Used across endpoints that parse structured data from LLM responses.
-    
-    Args:
-        response_text: Raw text response from LLM
-        
-    Returns:
-        Parsed JSON as dictionary
-        
-    Raises:
-        HTTPException: If JSON parsing fails
-        
-    Example:
-        >>> response = "```json\\n{\"key\": \"value\"}\\n```"
-        >>> data = parse_llm_json_response(response)
-        >>> assert data == {"key": "value"}
-    """
-    original_text = response_text
-    
-    # Remove markdown code blocks
-    if "```json" in response_text:
-        response_text = response_text.split("```json")[-1].split("```")[0]
-    elif "```" in response_text:
-        # Handle generic code blocks
-        parts = response_text.split("```")
-        if len(parts) >= 2:
-            response_text = parts[1]
-    
-    response_text = response_text.strip()
-    
-    try:
-        parsed = json.loads(response_text)
-        logger.debug(f"Successfully parsed LLM JSON response")
-        return parsed
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse LLM JSON response: {e}")
-        logger.debug(f"Response preview: {original_text[:500]}...")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to parse LLM response as valid JSON: {str(e)}"
-        )
+from utils.json_utils import parse_llm_json_response
 
+
+# ============================================================================
+# FORM DATA PARSING
+# ============================================================================
 
 def parse_form_bool(value: Any, default: bool = False) -> bool:
     """
     Safely parse boolean from form data.
     
-    Handles various string representations of booleans from form submissions.
+    Handles various string representations of booleans that can come from
+    HTML form submissions (checkboxes, radio buttons, etc.).
     
     Args:
         value: Form value (can be str, bool, None)
