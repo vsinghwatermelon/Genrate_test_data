@@ -7,10 +7,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import json
-from llm_factory import LLMFactory
-import os
+import logging
 
+from endpoints.common import get_llm_with_fallback
+from prompts_config.llm_prompts import get_parse_elements_prompt
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Constants
+MAX_ELEMENTS = 1000  # Maximum number of elements to process
 
 class ClickedElement(BaseModel):
     locator: str
@@ -38,84 +44,77 @@ class SchemaField(BaseModel):
 @router.post("/parse-clicked-elements")
 async def parse_clicked_elements(request: ParseRequest):
     """
-    Parse clicked elements into a schema using LLM
+    Parse clicked elements into a schema using LLM.
+    
+    Args:
+        request: ParseRequest containing clicked_elements and filled_fields
+        
+    Returns:
+        Dictionary with success status, parsed schema, and field count
+        
+    Raises:
+        HTTPException: If parsing fails or input validation fails
     """
     try:
-        # Use LLMFactory instead of direct Groq client
-        # Default to groq for this specific high-intelligence task if possible, else use ollama
-        provider = os.getenv("LLM_PROVIDER", "groq")
-        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile") if provider == "groq" else None
+        # Validate input
+        total_elements = len(request.clicked_elements) + len(request.filled_fields or [])
+        if total_elements == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No elements provided. Please provide at least one clicked or filled element."
+            )
+        if total_elements > MAX_ELEMENTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Too many elements ({total_elements}). Maximum allowed: {MAX_ELEMENTS}"
+            )
         
-        try:
-            llm = LLMFactory.create_llm(provider=provider, model_name=model)
-        except Exception as e:
-            # Fallback to ollama if groq fails/not config
-            print(f"[WARN] Failed to init {provider}, falling back to ollama: {e}")
-            llm = LLMFactory.create_llm(provider="ollama")
+        logger.info(f"Parsing {len(request.clicked_elements)} clicked elements and {len(request.filled_fields or [])} filled fields")
+        
+        # Get LLM with automatic fallback
+        llm = get_llm_with_fallback("groq")
         
         # Format the clicked elements for the LLM
-        elements_text = _format_elements_for_llm(request.clicked_elements, request.filled_fields)
+        elements_text = _format_elements_for_llm(request.clicked_elements, request.filled_fields or [])
         
-        # Create the prompt for the LLM
-        prompt = f"""You are acting as a Senior QA Architect and Test Data Specialist. 
-Your goal is to transform a raw log of UI interactions into a professional, production-ready Test Data Schema.
-
-### INPUT DATA: TRACKED UI INTERACTIONS
-{elements_text}
-
-### YOUR TASK
-Analyze the "Purpose", "Semantic Role", "Context", and "Options" of the interacted components to generate a JSON Schema. 
-Ignore layout-only elements (divs, spans) unless they represent a logical choice. Focus exclusively on fields that require data.
-
-### INTELLIGENT DEDUCTION RULES:
-1. **ENTITY RECOGNITION**: Use 'Page Context' (Section/Label) to name fields appropriately. 
-   - If Section='Personal Details' and Label='Name', name it 'personal_full_name'.
-   - Avoid generic names like 'input_1' or 'div_text'.
-2. **FIELD TYPE INFERENCE**: 
-   - If it has 'Dropdown Options', type is 'select'.
-   - If Purpose mentions 'Email', type is 'email'.
-   - If Purpose mentions 'Mobile' or 'Phone', type is 'phone'.
-   - If it's a date picker interaction, type is 'date'.
-3. **LOGICAL DEDUPLICATION (CRITICAL)**:
-   - Users often click a label, then a wrapper, then the input. 
-   - ALL these interactions for the same field MUST be merged into a SINGLE schema entry.
-   - Use the interaction with the most information (like Options or Input Value) as the source of truth.
-4. **ENUMERATION**: For 'select', 'radio', or 'dropdown_option' types, capture the possible options in the 'rules' field (e.g., "Must be one of: [Option A, Option B]").
-5. **REALISM**: Example values must be high-quality. No 'test_value'. Use 'John Doe', '9876543210', '1990-05-15', etc.
-
-### OUTPUT JSON STRUCTURE:
-Generate a JSON array of objects:
-{{
-    "name": "structured_snake_case_name",
-    "type": "string | number | email | phone | date | select | checkbox | currency | ssn",
-    "rules": "Detailed validation rules, format requirements, or list of options.",
-    "description": "Explanatory text describing what this field represents in the application flow.",
-    "example": "A realistic, valid example value.",
-    "confidence": 0.0 to 1.0 (float reflecting certainty of the field purpose)
-}}
-
-Return ONLY the valid JSON array."""
-
-        print(f"[PARSE] Calling LLM ({llm.model_name}) to parse {len(request.clicked_elements)} elements...")
+        # Create the prompt using centralized config
+        prompt = get_parse_elements_prompt(elements_text)
         
+        logger.info(f"Calling LLM ({getattr(llm, 'model_name', 'unknown')}) to parse elements...")
         response_text = llm.invoke(prompt).strip()
         
-        # Clean up the response
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[-1].split("```")[0]
-        elif "```" in response_text:
-            response_text = response_text.split("```")[-1].split("```")[0]
-        response_text = response_text.strip()
-        
-        # Parse the JSON
+        # Parse JSON from response (handles markdown code blocks)
         try:
-            parsed_schema = json.loads(response_text)
+            # Clean up response (remove code blocks)
+            clean_response = response_text
+            if "```json" in clean_response:
+                clean_response = clean_response.split("```json")[-1].split("```")[0]
+            elif "```" in clean_response:
+                clean_response = clean_response.split("```")[1] if len(clean_response.split("```")) >= 2 else clean_response
+            clean_response = clean_response.strip()
+            
+            parsed_schema = json.loads(clean_response)
+            
+            # Validate schema structure
+            if not isinstance(parsed_schema, list):
+                raise ValueError("Schema must be a JSON array")
+            
+            logger.info(f"Successfully parsed {len(parsed_schema)} fields from {total_elements} elements")
+            
         except json.JSONDecodeError as e:
-            print(f"[ERROR] Failed to parse LLM response: {e}")
-            print(f"Response was: {response_text}")
-            raise HTTPException(status_code=500, detail="Failed to parse LLM response as JSON")
-        
-        print(f"[PARSE] ✓ Successfully parsed {len(parsed_schema)} fields from semantic data")
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.debug(f"Response preview: {response_text[:500]}...")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to parse LLM response as valid JSON: {str(e)}"
+            )
+        except ValueError as e:
+            logger.error(f"Invalid schema structure: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid schema structure: {str(e)}"
+            )
+
         
         return {
             "success": True,
@@ -123,9 +122,14 @@ Return ONLY the valid JSON array."""
             "total_fields": len(parsed_schema)
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"[ERROR] Failed to parse clicked elements: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to parse clicked elements: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse clicked elements: {str(e)}"
+        )
 
 
 def _format_elements_for_llm(clicked_elements: List[ClickedElement], filled_fields: List[ClickedElement]) -> str:

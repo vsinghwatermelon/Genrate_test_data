@@ -1,19 +1,28 @@
-"""
-LLM Factory Module
-
-Provides a unified interface for both Ollama and Groq API.
-Allows seamless switching between local Ollama models and Groq API.
-"""
-
 import os
-from typing import Optional, Protocol, runtime_checkable
+import logging
+from typing import Optional, Protocol, runtime_checkable, Dict, Type, Any
 from abc import ABC, abstractmethod
 
 from dotenv import load_dotenv
+from utils.logger import get_logger
 
 # Load environment variables
 load_dotenv()
 
+logger = get_logger(__name__)
+
+# =============================================================================
+# CONSTANTS
+# =============================================================================
+
+PROVIDER_OLLAMA = "ollama"
+PROVIDER_GROQ = "groq"
+
+DEFAULT_TEMPERATURE = 0.7
+DEFAULT_MAX_TOKENS = 8192
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+DEFAULT_OLLAMA_MODEL = "llama3:latest"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 # =============================================================================
 # PROTOCOLS & INTERFACES
@@ -31,7 +40,13 @@ class LLMInterface(Protocol):
 class BaseLLM(ABC):
     """Abstract base class for LLM implementations."""
     
-    def __init__(self, temperature: float = 0.7):
+    def __init__(self, temperature: float = DEFAULT_TEMPERATURE):
+        """
+        Initialize the base LLM.
+        
+        Args:
+            temperature: Sampling temperature
+        """
         self.temperature = temperature
     
     @abstractmethod
@@ -55,13 +70,21 @@ class OllamaLLM(BaseLLM):
     
     def __init__(
         self, 
-        model_name: str = "llama3:latest", 
-        temperature: float = 0.7,
+        model_name: str = DEFAULT_OLLAMA_MODEL, 
+        temperature: float = DEFAULT_TEMPERATURE,
         base_url: Optional[str] = None
     ):
+        """
+        Initialize Ollama LLM.
+        
+        Args:
+            model_name: Name of the model
+            temperature: Sampling temperature
+            base_url: Ollama server URL
+        """
         super().__init__(temperature)
         self._model_name = model_name
-        self.host = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.host = base_url or os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL)
         
         # Import here to avoid circular imports and allow graceful degradation
         try:
@@ -71,7 +94,9 @@ class OllamaLLM(BaseLLM):
                 temperature=temperature,
                 host=self.host
             )
+            logger.info(f"OllamaLLM initialized: model={model_name}, host={self.host}")
         except ImportError:
+            logger.error("langchain_ollama not found. Please install with: pip install langchain-ollama")
             raise ImportError(
                 "langchain_ollama is required for Ollama support. "
                 "Install with: pip install langchain-ollama"
@@ -100,15 +125,25 @@ class GroqLLM(BaseLLM):
     def __init__(
         self, 
         model_name: Optional[str] = None, 
-        temperature: float = 0.7,
-        max_tokens: int = 8192,
+        temperature: float = DEFAULT_TEMPERATURE,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         api_key: Optional[str] = None
     ):
+        """
+        Initialize Groq LLM.
+        
+        Args:
+            model_name: Name of the model (defaults to GROQ_MODEL env or default)
+            temperature: Sampling temperature
+            max_tokens: Max tokens for generation
+            api_key: Groq API key
+        """
         super().__init__(temperature)
         
         # Get API key from parameter, environment, or raise error
         self._api_key = api_key or os.getenv("groq_api_key") or os.getenv("GROQ_API_KEY")
         if not self._api_key:
+            logger.error("Groq API key not found in environment or parameters.")
             raise ValueError(
                 "Groq API key not found. Set 'groq_api_key' or 'GROQ_API_KEY' "
                 "environment variable or pass api_key parameter."
@@ -119,17 +154,18 @@ class GroqLLM(BaseLLM):
             from groq import Groq
             self._client = Groq(api_key=self._api_key)
         except ImportError:
+            logger.error("groq package not found. Please install with: pip install groq")
             raise ImportError(
                 "groq package is required for Groq support. "
                 "Install with: pip install groq"
             )
         
         # Get model from parameter or environment
-        default_model = os.getenv("model", "openai/gpt-oss-20b").strip('"')
+        default_model = os.getenv("model", DEFAULT_GROQ_MODEL).strip('"')
         self._model_name = model_name or default_model
         self.max_tokens = max_tokens
         
-        print(f"✓ Groq API initialized with model: {self._model_name}")
+        logger.info(f"GroqLLM initialized: model={self._model_name}")
     
     def invoke(self, prompt: str) -> str:
         """
@@ -164,6 +200,7 @@ class GroqLLM(BaseLLM):
             return ''.join(response_parts)
             
         except Exception as e:
+            logger.error(f"Groq API failure: {e}")
             raise Exception(f"Groq API error: {str(e)}")
     
     @property
@@ -182,17 +219,17 @@ GroqWrapper = GroqLLM
 class LLMFactory:
     """Factory class to create LLM clients based on provider."""
     
-    PROVIDERS = {
-        "ollama": OllamaLLM,
-        "groq": GroqLLM,
+    PROVIDERS: Dict[str, Type[BaseLLM]] = {
+        PROVIDER_OLLAMA: OllamaLLM,
+        PROVIDER_GROQ: GroqLLM,
     }
     
     @classmethod
     def create(
         cls, 
-        provider: str = "ollama", 
+        provider: str = PROVIDER_OLLAMA, 
         model_name: Optional[str] = None, 
-        temperature: float = 0.7,
+        temperature: float = DEFAULT_TEMPERATURE,
         **kwargs
     ) -> BaseLLM:
         """
@@ -213,6 +250,7 @@ class LLMFactory:
         provider_lower = provider.lower()
         
         if provider_lower not in cls.PROVIDERS:
+            logger.error(f"Unsupported LLM provider: {provider}")
             raise ValueError(
                 f"Unsupported LLM provider: '{provider}'. "
                 f"Supported providers: {list(cls.PROVIDERS.keys())}"
@@ -225,17 +263,17 @@ class LLMFactory:
         
         if model_name:
             init_kwargs["model_name"] = model_name
-        elif provider_lower == "ollama":
-            init_kwargs["model_name"] = os.getenv("OLLAMA_MODEL", "llama3:latest")
+        elif provider_lower == PROVIDER_OLLAMA:
+            init_kwargs["model_name"] = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
         
         return llm_class(**init_kwargs)
     
     @classmethod
     def create_llm(
         cls, 
-        provider: str = "ollama", 
+        provider: str = PROVIDER_OLLAMA, 
         model_name: Optional[str] = None, 
-        temperature: float = 0.7
+        temperature: float = DEFAULT_TEMPERATURE
     ) -> BaseLLM:
         """
         Alias for create() for backward compatibility.
@@ -252,7 +290,7 @@ class LLMFactory:
             llm_class: LLM class that implements BaseLLM
         """
         if not issubclass(llm_class, BaseLLM):
-            raise TypeError(f"LLM class must inherit from BaseLLM")
+            raise TypeError("LLM class must inherit from BaseLLM")
         cls.PROVIDERS[name.lower()] = llm_class
 
 

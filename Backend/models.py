@@ -20,9 +20,6 @@ class LLMProvider(str, Enum):
     GROQ = "groq"
 
 
-
-
-
 # =============================================================================
 # FIELD MODELS
 # =============================================================================
@@ -31,41 +28,41 @@ class SchemaField(BaseModel):
     """Definition of a single schema field."""
     name: str = Field(..., min_length=1, description="Field name")
     type: str = Field(default="string", description="Field data type")
-    rules: Optional[Any] = Field(default=None, description="Validation rules")
+    rules: Optional[Any] = Field(default=None, description="Validation rules or options")
     example: Optional[Any] = Field(default=None, description="Example value")
     description: Optional[str] = Field(default=None, description="Field description")
-    min_length: Optional[int] = Field(default=None, ge=0, description="Minimum length")
-    max_length: Optional[int] = Field(default=None, ge=0, description="Maximum length")
-    min_value: Optional[float] = Field(default=None, description="Minimum numeric value")
-    max_value: Optional[float] = Field(default=None, description="Maximum numeric value")
+    min_length: Optional[int] = Field(default=None, ge=0, description="Min string length")
+    max_length: Optional[int] = Field(default=None, ge=0, description="Max string length")
+    min_value: Optional[float] = Field(default=None, description="Min numeric value")
+    max_value: Optional[float] = Field(default=None, description="Max numeric value")
     pattern: Optional[str] = Field(default=None, description="Regex pattern")
-    enum_values: Optional[List[str]] = Field(default=None, description="Allowed values")
-    nullable: bool = Field(default=False, description="Whether field can be null")
-    unique: bool = Field(default=False, description="Whether values must be unique")
-    references: Optional[Dict[str, str]] = Field(default=None, description="FK reference")
+    enum_values: Optional[List[str]] = Field(default=None, description="Allowed values for select/radio")
+    nullable: bool = Field(default=False, description="Can field be null?")
+    unique: bool = Field(default=False, description="Values must be unique across records")
+    references: Optional[Dict[str, str]] = Field(default=None, description="FK: {'table': 'T', 'field': 'F'}")
 
     @field_validator('rules', 'example', mode='before')
     @classmethod
-    def ensure_string(cls, v: Any) -> Optional[str]:
-        """Convert non-string values (like booleans) to strings for prompt compatibility."""
+    def convert_to_string(cls, v: Any) -> Optional[str]:
+        """Ensure specific fields are strings for LLM prompt processing."""
         if v is None:
             return None
         return str(v)
 
     @field_validator('name')
     @classmethod
-    def validate_name(cls, v: str) -> str:
-        """Ensure field name is valid."""
+    def clean_name(cls, v: str) -> str:
+        """Strip whitespace from field names."""
         return v.strip()
 
 
 class GroupConfig(BaseModel):
     """Configuration for a data generation group."""
-    name: str = Field(..., description="Group name")
-    count: int = Field(..., ge=0, description="Number of records to generate")
-    correct_fields: List[str] = Field(default_factory=list, description="Fields that must be valid")
-    wrong_fields: List[str] = Field(default_factory=list, description="Fields that must be invalid")
-    wrong_field_rules: Optional[Dict[str, str]] = Field(default_factory=dict, description="User-specified rules for what should be wrong in each field")
+    name: str = Field(..., description="Unique group identifier")
+    count: int = Field(..., ge=0, description="Records to generate")
+    correct_fields: List[str] = Field(default_factory=list, description="Fields that must follow rules")
+    wrong_fields: List[str] = Field(default_factory=list, description="Fields that must violate rules")
+    wrong_field_rules: Optional[Dict[str, str]] = Field(default_factory=dict, description="Custom violation logic")
 
 
 # =============================================================================
@@ -74,31 +71,25 @@ class GroupConfig(BaseModel):
 
 class GenerateRequest(BaseModel):
     """Request model for /generate endpoint."""
-    schema_fields: List[SchemaField] = Field(..., min_length=1, description="Field definitions")
-    num_records: int = Field(default=5, ge=1, le=1000, description="Total records to generate")
-    correct_num_records: int = Field(default=5, ge=0, description="Number of valid records")
-    wrong_num_records: int = Field(default=0, ge=0, description="Number of invalid records")
-    additional_rules: Optional[str] = Field(default=None, description="Additional generation rules")
-    groups: Optional[List[GroupConfig]] = Field(default=None, description="Group-based generation config")
-    model_provider: LLMProvider = Field(default=LLMProvider.OLLAMA, description="LLM provider")
-
-    @field_validator('correct_num_records', 'wrong_num_records')
-    @classmethod
-    def validate_record_counts(cls, v: int, info) -> int:
-        """Validate record count is non-negative."""
-        return max(0, v)
+    schema_fields: List[SchemaField] = Field(..., min_length=1)
+    num_records: int = Field(default=5, ge=1, le=1000)
+    correct_num_records: int = Field(default=5, ge=0)
+    wrong_num_records: int = Field(default=0, ge=0)
+    additional_rules: Optional[str] = None
+    groups: Optional[List[GroupConfig]] = None
+    model_provider: LLMProvider = LLMProvider.OLLAMA
 
 
 class SeleniumGenerateRequest(BaseModel):
     """Request model for /generate-from-selenium endpoint."""
-    selenium_script: str = Field(..., min_length=1, description="Selenium script content")
-    num_records: int = Field(default=5, ge=1, le=1000, description="Total records to generate")
-    correct_num_records: Optional[int] = Field(default=None, ge=0, description="Number of valid records")
-    wrong_num_records: int = Field(default=0, ge=0, description="Number of invalid records")
-    additional_rules: Optional[str] = Field(default=None, description="Additional generation rules")
-    groups: Optional[List[GroupConfig]] = Field(default=None, description="Group-based generation config")
-    parse_only: bool = Field(default=False, description="Only parse schema, don't generate data")
-    model_provider: LLMProvider = Field(default=LLMProvider.OLLAMA, description="LLM provider")
+    selenium_script: str = Field(..., min_length=1)
+    num_records: int = Field(default=5, ge=1, le=1000)
+    correct_num_records: Optional[int] = None
+    wrong_num_records: int = Field(default=0, ge=0)
+    additional_rules: Optional[str] = None
+    groups: Optional[List[GroupConfig]] = None
+    parse_only: bool = False
+    model_provider: LLMProvider = LLMProvider.OLLAMA
 
 
 # =============================================================================
@@ -106,23 +97,23 @@ class SeleniumGenerateRequest(BaseModel):
 # =============================================================================
 
 class HealthResponse(BaseModel):
-    """Response model for /health endpoint."""
-    status: str = Field(..., description="Health status: 'healthy' or 'unhealthy'")
-    ollama: Optional[str] = Field(default=None, description="Ollama connection status")
-    groq: Optional[str] = Field(default=None, description="Groq connection status")
-    model: Optional[str] = Field(default=None, description="Active model name")
-    error: Optional[str] = Field(default=None, description="Error message if unhealthy")
+    """Health check response."""
+    status: str
+    ollama: Optional[str] = None
+    groq: Optional[str] = None
+    model: Optional[str] = None
+    error: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
-    """Response model for /generate endpoint."""
-    data: List[Dict[str, Any]] = Field(..., description="Generated records")
-    count: int = Field(..., ge=0, description="Number of records generated")
-    groups: Optional[List[Dict[str, Any]]] = Field(default=None, description="Group breakdown info")
+    """Data generation response."""
+    data: List[Dict[str, Any]]
+    count: int
+    groups: Optional[List[Dict[str, Any]]] = None
 
 
 class ParsedField(BaseModel):
-    """A field parsed from Selenium script."""
+    """A field extracted from Selenium scripts."""
     name: str
     type: str
     rules: str = ""
@@ -132,14 +123,14 @@ class ParsedField(BaseModel):
 
 
 class SeleniumGenerateResponse(BaseModel):
-    """Response model for /generate-from-selenium endpoint."""
-    data: Optional[List[Dict[str, Any]]] = Field(default=None, description="Generated records")
-    count: Optional[int] = Field(default=None, ge=0, description="Number of records generated")
-    parsed_schema: Optional[List[ParsedField]] = Field(default=None, description="Parsed schema fields")
-    parse_error: Optional[str] = Field(default=None, description="Parsing error if any")
+    """Selenium-based generation response."""
+    data: Optional[List[Dict[str, Any]]] = None
+    count: Optional[int] = None
+    parsed_schema: Optional[List[ParsedField]] = None
+    parse_error: Optional[str] = None
 
 
 class ErrorResponse(BaseModel):
-    """Standard error response."""
-    detail: str = Field(..., description="Error message")
-    error_code: Optional[str] = Field(default=None, description="Error code for programmatic handling")
+    """Standard error payload."""
+    detail: str
+    error_code: Optional[str] = None

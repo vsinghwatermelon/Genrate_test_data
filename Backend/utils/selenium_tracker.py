@@ -66,21 +66,6 @@ class SeleniumActionTracker:
                     print(f"      Payload: {str(payload)[:500]}")
             except:
                 pass
-        
-        if response_body:
-            # Try to format response if it's JSON
-            try:
-                if isinstance(response_body, bytes):
-                    response_str = response_body.decode('utf-8')
-                    try:
-                        r_json = json.loads(response_str)
-                        print(f"      Response: {json.dumps(r_json, indent=2)[:500]}")
-                    except:
-                        print(f"      Response: {response_str[:500]}")
-                else:
-                    print(f"      Response: {str(response_body)[:500]}")
-            except:
-                pass
     
     def _extract_element_info(self, element: WebElement, locator: str, action: str, description: str = "") -> Dict[str, Any]:
         """
@@ -119,7 +104,12 @@ class SeleniumActionTracker:
             # Use a consolidated JS block to extract EVERYTHING in one go
             # This is much faster and more resistant to stale element errors
             try:
-                driver = element.parent
+                # Unwrap if it's a TrackedWebElement
+                real_element = element
+                if hasattr(element, '_element'):
+                    real_element = element._element
+                
+                driver = real_element.parent
                 all_data = driver.execute_script("""
                     var el = arguments[0];
                     if (!el) return null;
@@ -323,7 +313,7 @@ class SeleniumActionTracker:
                         },
                         options: getOptions(el)
                     };
-                """, element)
+                """, real_element)
                 
                 if all_data:
                     info["attributes"] = all_data.get('attributes', {})
@@ -682,13 +672,34 @@ class SeleniumActionTracker:
                 print(f"\n{idx}. [{call['method']}] {call['url']}")
                 if call.get('response_code'):
                     print(f"   Status: {call['response_code']}")
+                
+                # Show Payload
                 if call.get('payload'):
                     try:
                         if isinstance(call['payload'], bytes):
-                            p_str = call['payload'].decode('utf-8')
+                            p_str = call['payload'].decode('utf-8', errors='replace')
                         else:
                             p_str = str(call['payload'])
                         print(f"   Payload: {p_str[:200]}{'...' if len(p_str) > 200 else ''}")
+                    except:
+                        pass
+                
+                # Show Response Body
+                if call.get('response_body'):
+                    try:
+                        import json
+                        if isinstance(call['response_body'], bytes):
+                            r_str = call['response_body'].decode('utf-8', errors='replace')
+                        else:
+                            r_str = str(call['response_body'])
+                        
+                        try:
+                            # Try to format as JSON if possible
+                            r_json = json.loads(r_str)
+                            r_pretty = json.dumps(r_json, indent=2)
+                            print(f"   Response: {r_pretty[:500]}{'...' if len(r_pretty) > 500 else ''}")
+                        except:
+                            print(f"   Response: {r_str[:200]}{'...' if len(r_str) > 200 else ''}")
                     except:
                         pass
 

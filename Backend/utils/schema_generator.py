@@ -16,6 +16,19 @@ from utils.field_extractor import (
     normalize_field_name
 )
 
+# Constants
+VALID_FIELD_TYPES = [
+    'string', 'number', 'integer', 'float', 'email', 'phone', 
+    'select', 'checkbox', 'radio', 'combobox', 'date', 'textarea', 'boolean'
+]
+DEFAULT_FIELD_TYPE = 'string'
+DEFAULT_RULES = 'Enter a valid value'
+DEFAULT_CONFIDENCE = 0.8
+MAX_OPTIONS_TO_SHOW = 10  # Max dropdown options to display in prompts
+MAX_SCHEMA_FIELDS = 100  # Maximum fields in a schema
+MIN_CONFIDENCE_SCORE = 0.3  # Minimum confidence to include a field
+HIGH_CONFIDENCE_THRESHOLD = 0.9  # Threshold for high confidence
+
 
 class SchemaGenerator:
     """Generate test data schema from extracted HTML fields."""
@@ -172,10 +185,10 @@ Analyze the components and generate the schema now:"""
             
             # Options for choice fields
             if field.get('options'):
-                opts = [opt.get('label', '') or opt.get('value', '') for opt in field['options'][:10]]
+                opts = [opt.get('label', '') or opt.get('value', '') for opt in field['options'][:MAX_OPTIONS_TO_SHOW]]
                 lines.append(f"   Available Options: {', '.join(opts)}")
-                if len(field['options']) > 10:
-                    lines.append(f"   (... and {len(field['options'])-10} more options)")
+                if len(field['options']) > MAX_OPTIONS_TO_SHOW:
+                    lines.append(f"   (... and {len(field['options'])-MAX_OPTIONS_TO_SHOW} more options)")
             
             lines.append("")
         
@@ -217,19 +230,17 @@ Analyze the components and generate the schema now:"""
                 continue
             
             # Normalize type
-            field_type = entry.get('type', 'string').lower()
-            valid_types = ['string', 'number', 'email', 'phone', 'select', 'checkbox', 
-                          'radio', 'combobox', 'date', 'textarea']
-            if field_type not in valid_types:
-                field_type = 'string'
+            field_type = entry.get('type', DEFAULT_FIELD_TYPE).lower()
+            if field_type not in VALID_FIELD_TYPES:
+                field_type = DEFAULT_FIELD_TYPE
             
             normalized_entry = {
                 'name': entry.get('name', ''),
                 'type': field_type,
-                'rules': entry.get('rules', 'Enter a valid value'),
+                'rules': entry.get('rules', DEFAULT_RULES),
                 'description': entry.get('description', entry.get('name', '')),
                 'example': entry.get('example', ''),
-                'confidence': float(entry.get('confidence', 0.8))
+                'confidence': float(entry.get('confidence', DEFAULT_CONFIDENCE))
             }
             
             # Add options if present
@@ -353,9 +364,7 @@ Analyze the components and generate the schema now:"""
             seen_names.add(name)
             
             # Validate type
-            valid_types = ['string', 'number', 'email', 'phone', 'select', 
-                          'checkbox', 'radio', 'combobox', 'date', 'textarea']
-            if entry.get('type') not in valid_types:
+            if entry.get('type') not in VALID_FIELD_TYPES:
                 errors.append(f"Entry {i}: Invalid type '{entry.get('type')}'")
         
         return len(errors) == 0, errors

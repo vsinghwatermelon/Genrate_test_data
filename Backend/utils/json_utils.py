@@ -9,10 +9,16 @@ import json
 import re
 from typing import Optional, List, Dict, Any, Union
 
+# Constants
+MAX_REPAIR_ATTEMPTS = 5  # Maximum number of repair attempts
+MAX_JSON_LENGTH = 1000000  # Maximum JSON string length to process (1MB)
+MAX_PREVIEW_LENGTH = 500  # Maximum length for error previews
+DEFAULT_TIMEOUT = 30  # Default timeout for parsing operations
+MAX_NESTING_DEPTH = 50  # Maximum nesting depth for JSON structures
 
 class JSONCleaner:
     """Utility class for cleaning and repairing JSON responses from LLMs."""
-    
+
     @staticmethod
     def remove_control_characters(text: str) -> str:
         """
@@ -27,7 +33,7 @@ class JSONCleaner:
             else:
                 cleaned.append(' ')
         return ''.join(cleaned)
-    
+
     @staticmethod
     def remove_markdown_code_blocks(text: str) -> str:
         """Remove markdown code block markers."""
@@ -36,7 +42,7 @@ class JSONCleaner:
         text = re.sub(r'^```\s*\n?', '', text, flags=re.MULTILINE)
         text = re.sub(r'\n?```\s*$', '', text)
         return text
-    
+
     @staticmethod
     def remove_comments(text: str) -> str:
         """Remove JavaScript-style comments from JSON."""
@@ -45,28 +51,28 @@ class JSONCleaner:
         # Remove multi-line comments
         text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
         return text
-    
+
     @staticmethod
     def fix_double_brackets(text: str) -> str:
         """Fix accidental double brackets."""
         text = re.sub(r'^\s*\[\s*\[', '[', text)
         text = re.sub(r'\]\s*\]\s*$', ']', text)
         return text
-    
+
     @staticmethod
     def fix_trailing_commas(text: str) -> str:
         """Remove trailing commas before closing brackets."""
         text = re.sub(r',(\s*\])', r'\1', text)
         text = re.sub(r',(\s*\})', r'\1', text)
         return text
-    
+
     @staticmethod
     def fix_escaped_quotes(text: str) -> str:
         """Fix incorrectly escaped quotes."""
         # JSON doesn't require escaping single quotes
         text = text.replace("\\'", "'")
         return text
-    
+
     @staticmethod
     def remove_null_tokens(text: str) -> str:
         """Remove standalone null tokens that appear as array elements."""
@@ -76,12 +82,12 @@ class JSONCleaner:
         text = re.sub(r'\[\s*null\s*,', '[', text)
         text = re.sub(r',\s*null\s*\]', ']', text)
         return text
-    
+
     @staticmethod
     def collapse_multiple_commas(text: str) -> str:
         """Collapse accidental multiple commas."""
         return re.sub(r',\s*,+', ',', text)
-    
+
     @staticmethod
     def fix_python_literals(text: str) -> str:
         """Convert Python literals to JSON equivalents."""
@@ -89,7 +95,7 @@ class JSONCleaner:
         text = re.sub(r'\bFalse\b', 'false', text)
         text = re.sub(r'\bNone\b', 'null', text)
         return text
-    
+
     @staticmethod
     def fix_single_quotes(text: str) -> str:
         """
@@ -98,26 +104,26 @@ class JSONCleaner:
         """
         text = re.sub(r"(?<=[{,\s])'([^']+?)'\s*:\s*", r'"\1": ', text)
         return text
-    
+
     @staticmethod
     def remove_blank_lines(text: str) -> str:
         """Remove blank lines from JSON."""
         return '\n'.join(line for line in text.splitlines() if line.strip())
-    
+
     @classmethod
     def clean(cls, text: str) -> str:
         """
         Apply all cleaning operations to a JSON string.
-        
+
         Args:
             text: Raw JSON string from LLM
-            
+
         Returns:
             Cleaned JSON string
         """
         if not text:
             return text
-        
+
         # Apply all cleaning steps in order
         text = cls.remove_control_characters(text)
         text = cls.remove_markdown_code_blocks(text)
@@ -128,17 +134,17 @@ class JSONCleaner:
         text = cls.remove_null_tokens(text)
         text = cls.collapse_multiple_commas(text)
         text = cls.remove_blank_lines(text)
-        
+
         return text
-    
+
     @classmethod
     def repair(cls, text: str) -> str:
         """
         Apply aggressive repair operations for heavily malformed JSON.
-        
+
         Args:
             text: Cleaned but still invalid JSON string
-            
+
         Returns:
             Repaired JSON string
         """
@@ -149,7 +155,7 @@ class JSONCleaner:
         text = cls.collapse_multiple_commas(text)
         text = cls.fix_trailing_commas(text)
         return text
-    
+
     @staticmethod
     def fix_missing_commas(text: str) -> str:
         """
@@ -158,53 +164,53 @@ class JSONCleaner:
         """
         # Fix missing comma between objects: } { -> }, {
         text = re.sub(r'\}\s*\{', '}, {', text)
-        
+
         # Fix missing comma between objects in array: }\n  { -> },\n  {
         text = re.sub(r'\}(\s*\n\s*)\{', r'},\1{', text)
-        
+
         # Fix missing comma after string value before next key: "value" "key" -> "value", "key"
         text = re.sub(r'(")\s*\n\s*(")', r'\1,\n\2', text)
-        
+
         # Fix missing comma between array elements
         text = re.sub(r'\](\s*\n\s*)\[', r'],\1[', text)
-        
+
         # Fix missing comma after number before next key
         text = re.sub(r'(\d)\s*\n\s*(")', r'\1,\n\2', text)
-        
+
         # Fix missing comma after true/false/null before next key
         text = re.sub(r'(true|false|null)\s*\n\s*(")', r'\1,\n\2', text)
-        
+
         return text
-    
+
     @staticmethod
     def fix_unquoted_keys(text: str) -> str:
         """Fix unquoted keys in JSON objects."""
         # Match unquoted keys: { key: or , key:
         text = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
         return text
-    
+
     @classmethod
     def deep_repair(cls, text: str) -> str:
         """
         Perform deep repair on heavily malformed JSON.
         This is a last resort when standard repair fails.
-        
+
         Args:
             text: Malformed JSON string
-            
+
         Returns:
             Repaired JSON string
         """
         # First apply standard repairs
         text = cls.repair(text)
-        
+
         # Try to extract individual objects and rebuild array
         objects = []
         current_obj = ""
         brace_count = 0
         in_string = False
         escape = False
-        
+
         for char in text:
             if in_string:
                 if escape:
@@ -234,40 +240,39 @@ class JSONCleaner:
                         current_obj = ""
                 elif brace_count > 0:
                     current_obj += char
-        
+
         if objects:
             return json.dumps(objects)
-        
-        return text
 
+        return text
 
 class JSONExtractor:
     """Utility class for extracting JSON from mixed text responses."""
-    
+
     @staticmethod
     def extract_first_array(text: str) -> Optional[str]:
         """
         Extract the first balanced JSON array from text.
         Handles quoted strings and escapes properly.
-        
+
         Args:
             text: Text potentially containing a JSON array
-            
+
         Returns:
             The extracted JSON array string, or None if not found
         """
         if not text:
             return None
-        
+
         start = text.find('[')
         if start == -1:
             return None
-        
+
         i = start
         depth = 0
         in_str = False
         escape = False
-        
+
         while i < len(text):
             ch = text[i]
             if in_str:
@@ -287,32 +292,32 @@ class JSONExtractor:
                     if depth == 0:
                         return text[start:i + 1]
             i += 1
-        
+
         return None
-    
+
     @staticmethod
     def extract_first_object(text: str) -> Optional[str]:
         """
         Extract the first balanced JSON object from text.
-        
+
         Args:
             text: Text potentially containing a JSON object
-            
+
         Returns:
             The extracted JSON object string, or None if not found
         """
         if not text:
             return None
-        
+
         start = text.find('{')
         if start == -1:
             return None
-        
+
         i = start
         depth = 0
         in_str = False
         escape = False
-        
+
         while i < len(text):
             ch = text[i]
             if in_str:
@@ -332,34 +337,34 @@ class JSONExtractor:
                     if depth == 0:
                         return text[start:i + 1]
             i += 1
-        
+
         return None
-    
+
     @staticmethod
     def fix_truncated_array(text: str) -> str:
         """
         Attempt to fix a truncated JSON array.
-        
+
         Args:
             text: Potentially truncated JSON array
-            
+
         Returns:
             Fixed JSON array
         """
         if not text:
             return text
-        
+
         # Find array start
         start = text.find('[')
         if start == -1:
             return text
-        
+
         incomplete = text[start:]
-        
+
         # Check if we have more opens than closes
         open_braces = incomplete.count('{') - incomplete.count('}')
         open_brackets = incomplete.count('[') - incomplete.count(']')
-        
+
         if open_braces > 0 or open_brackets > 0:
             # Truncate at last complete object
             last_complete = incomplete.rfind('},')
@@ -372,22 +377,22 @@ class JSONExtractor:
                 last_brace = incomplete.rfind('{')
                 if last_brace > 0:
                     incomplete = incomplete[:last_brace].rstrip(',').rstrip()
-            
+
             # Ensure proper closing
             if not incomplete.rstrip().endswith(']'):
                 incomplete = incomplete.rstrip(',').rstrip() + '\n]'
-        
+
         return incomplete
-    
+
     @classmethod
     def extract_json(cls, text: str, expect_array: bool = True) -> Optional[str]:
         """
         Extract JSON from text, with fallback to regex if balanced extraction fails.
-        
+
         Args:
             text: Text containing JSON
             expect_array: Whether to expect an array (vs object)
-            
+
         Returns:
             Extracted JSON string
         """
@@ -407,92 +412,90 @@ class JSONExtractor:
                 match = re.search(r'\{.*\}', text, re.DOTALL)
                 if match:
                     result = match.group(0)
-        
-        return result
 
+        return result
 
 class NDJSONParser:
     """Parser for Newline-Delimited JSON (Ollama streaming format)."""
-    
+
     @staticmethod
     def parse(text: str) -> str:
         """
         Parse NDJSON stream and assemble response content.
-        
+
         Ollama streams responses as multiple JSON objects, each with a 'response' field.
         This method assembles them into a single string.
-        
+
         Args:
             text: NDJSON stream text
-            
+
         Returns:
             Assembled response content
         """
         assembled = []
-        
+
         if not text:
             return ''
-        
+
         for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
-            
+
             try:
                 obj = json.loads(line)
                 if isinstance(obj, dict) and 'response' in obj:
                     assembled.append(obj['response'])
             except (json.JSONDecodeError, ValueError):
                 continue
-        
+
         return ''.join(assembled)
 
-
 def parse_llm_json_response(
-    response: str, 
+    response: str,
     expect_array: bool = True
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Parse JSON from an LLM response with comprehensive error handling.
-    
+
     Args:
         response: Raw LLM response text
         expect_array: Whether to expect a JSON array (vs object)
-        
+
     Returns:
         Parsed JSON data
-        
+
     Raises:
         ValueError: If JSON cannot be parsed after all repair attempts
     """
     if not response:
         raise ValueError("Empty response from LLM")
-    
+
     # Try to parse NDJSON (Ollama format)
     assembled = NDJSONParser.parse(response)
     source_text = assembled if assembled else response
-    
+
     # Extract JSON
     json_str = JSONExtractor.extract_json(source_text, expect_array)
     if not json_str:
         json_str = source_text
-    
+
     # Clean JSON
     json_str = JSONCleaner.clean(json_str)
-    
+
     # Try to parse
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
         pass
-    
+
     # Try with repairs
     repaired = JSONCleaner.repair(json_str)
     try:
         return json.loads(repaired)
     except json.JSONDecodeError:
         pass
-    
+
     # Try deep repair as last resort
     try:
         deep_repaired = JSONCleaner.deep_repair(json_str)

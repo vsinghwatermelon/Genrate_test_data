@@ -1,25 +1,13 @@
-"""
-Group Data Generator Module
-
-Specialized generator for group-based test data generation.
-Allows fine-grained control over which fields are valid/invalid per group.
-"""
-
 import json
+import logging
 from typing import Dict, List, Any, Optional
 
 from llm_factory import LLMFactory, BaseLLM
 from prompts import DataGenerationPrompts
 from utils.json_utils import JSONCleaner, JSONExtractor, NDJSONParser
-from utils.console import (
-    safe_print, 
-    print_header, 
-    print_subheader, 
-    print_success, 
-    print_error,
-    print_warning,
-)
+from utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 class GroupDataGenerator:
     """
@@ -47,14 +35,16 @@ class GroupDataGenerator:
         self.provider = provider
         self.max_retries = max_retries
         
+        logger.debug(f"Initializing GroupDataGenerator with provider={provider}, model={model_name}")
+        
+        init_kwargs = {"temperature": 0.7}
         if provider.lower() == "ollama":
-            self.llm: BaseLLM = LLMFactory.create_llm(
-                provider=provider, 
-                model_name=model_name, 
-                temperature=0.7
-            )
-        else:
-            self.llm = LLMFactory.create_llm(provider=provider, temperature=0.7)
+            init_kwargs["model_name"] = model_name
+            
+        self.llm: BaseLLM = LLMFactory.create_llm(
+            provider=provider, 
+            **init_kwargs
+        )
     
     def generate_groups(
         self,
@@ -78,24 +68,18 @@ class GroupDataGenerator:
         all_data: List[Dict] = []
         group_breakdown: List[Dict] = []
         
-        total_records = sum(g.get('count', 0) for g in groups)
-        
-        print_header("GROUP-BASED DATA GENERATION")
-        safe_print(f"Total Groups: {len(groups)}")
-        safe_print(f"Total Records: {total_records}")
+        total_requested = sum(g.get('count', 0) for g in groups)
+        logger.info(f"Starting group generation: {len(groups)} groups, {total_requested} total records")
         
         for i, group in enumerate(groups, 1):
             group_name = group.get('name', f'Group{i}')
             group_count = group.get('count', 0)
             
             if group_count <= 0:
-                safe_print(f"⊘ Skipping {group_name} (count = 0)")
+                logger.debug(f"Skipping group '{group_name}' as requested count is 0")
                 continue
             
-            print_subheader(f"[{i}/{len(groups)}] Generating {group_name}")
-            safe_print(f"  Records: {group_count}")
-            safe_print(f"  Correct Fields: {', '.join(group.get('correct_fields', [])) or 'All'}")
-            safe_print(f"  Wrong Fields: {', '.join(group.get('wrong_fields', [])) or 'None'}")
+            logger.info(f"[{i}/{len(groups)}] Generating group '{group_name}' ({group_count} records)")
             
             try:
                 # Generate data for this group
@@ -112,25 +96,24 @@ class GroupDataGenerator:
                     record['_wrong_fields'] = group.get('wrong_fields', [])
                 
                 # Limit to requested count
-                group_data = group_data[:group_count]
+                final_group_data = group_data[:group_count]
                 
-                print_success(f"Generated {len(group_data)} records for {group_name}")
+                logger.info(f"Generated {len(final_group_data)} records for '{group_name}'")
                 
-                all_data.extend(group_data)
+                all_data.extend(final_group_data)
                 group_breakdown.append({
                     'group_name': group_name,
-                    'count': len(group_data),
+                    'count': len(final_group_data),
                     'correct_fields': group.get('correct_fields', []),
                     'wrong_fields': group.get('wrong_fields', [])
                 })
                 
             except Exception as e:
-                print_error(f"Error generating {group_name}: {str(e)}")
-                raise Exception(f"Failed to generate {group_name}: {str(e)}")
+                logger.error(f"Failed to generate group '{group_name}': {e}")
+                # We stop on first failure to maintain data integrity
+                raise Exception(f"Failed to generate group '{group_name}': {str(e)}")
         
-        print_header("GENERATION COMPLETE")
-        safe_print(f"Total Records Generated: {len(all_data)}")
-        safe_print(f"Groups Processed: {len(group_breakdown)}")
+        logger.info(f"Generation complete. Total records: {len(all_data)}")
         
         return {
             "data": all_data,
@@ -147,17 +130,7 @@ class GroupDataGenerator:
     ) -> List[Dict[str, Any]]:
         """
         Generate data for a single group with retry logic.
-        
-        Args:
-            schema_fields: List of field definitions
-            group: Group configuration
-            additional_rules: Optional additional context
-            parent_tables_data: Optional parent table data
-            
-        Returns:
-            List of generated records
         """
-        # Create specialized prompt for this group
         prompt = DataGenerationPrompts.create_group_prompt(
             schema_fields=schema_fields,
             group=group,
@@ -165,24 +138,14 @@ class GroupDataGenerator:
             parent_tables_data=parent_tables_data
         )
         
-        safe_print(f"  Prompt length: {len(prompt)} characters")
-        
-        # Retry loop
         for attempt in range(self.max_retries):
             try:
-                # Generate data using LLM
                 response = self.llm.invoke(prompt)
-                safe_print(f"  LLM response received ({len(response) if response else 0} chars)")
                 
-                # Check for empty response
-                if not response or len(response.strip()) == 0:
-                    if attempt < self.max_retries - 1:
-                        print_warning(f"Empty response, retrying... ({attempt + 2}/{self.max_retries})")
-                        continue
-                    else:
-                        raise Exception("LLM returned empty response after all retries")
+                if not response or not response.strip():
+                    logger.warning(f"Empty response from LLM on attempt {attempt + 1}")
+                    continue
                 
-                # Parse the response
                 data = self._parse_response(response)
                 
                 if not isinstance(data, list):
@@ -190,58 +153,34 @@ class GroupDataGenerator:
                 
                 return data
                 
-            except json.JSONDecodeError as e:
-                if attempt < self.max_retries - 1:
-                    print_warning(f"JSON parse error: {str(e)}")
-                    print_warning(f"Retrying... ({attempt + 2}/{self.max_retries})")
-                    continue
-                else:
-                    print_error(f"Failed to parse JSON after all retries")
-                    raise Exception(f"Failed to parse JSON: {str(e)}")
-                    
             except Exception as e:
-                if attempt < self.max_retries - 1:
-                    print_warning(f"LLM error: {e}")
-                    print_warning(f"Retrying... ({attempt + 2}/{self.max_retries})")
-                    continue
-                else:
-                    raise Exception(f"LLM error after all retries: {e}")
+                logger.warning(f"Attempt {attempt + 1}/{self.max_retries} failed for group '{group.get('name')}': {e}")
+                if attempt == self.max_retries - 1:
+                    logger.error(f"All retry attempts failed for group '{group.get('name')}'")
+                    raise e
         
-        raise Exception("Failed to generate data after all retries")
+        raise Exception(f"Failed to generate data for group after {self.max_retries} retries")
     
     def _parse_response(self, response: str) -> List[Dict[str, Any]]:
-        """
-        Parse LLM response into structured data.
+        """Parse LLM response into structured data with multi-level repair."""
+        # Clean response (handles NDJSON and extraction)
+        source_text = NDJSONParser.parse(response) or response
+        json_str = JSONExtractor.extract_json(source_text, expect_array=True) or source_text
+        cleaned_json = JSONCleaner.clean(json_str)
         
-        Args:
-            response: Raw LLM response
-            
-        Returns:
-            List of parsed records
-        """
-        # Try NDJSON parsing first (Ollama format)
-        assembled = NDJSONParser.parse(response)
-        source_text = assembled if assembled else response
-        
-        # Extract JSON array
-        json_str = JSONExtractor.extract_json(source_text, expect_array=True)
-        if not json_str:
-            json_str = source_text
-        
-        # Clean JSON
-        json_str = JSONCleaner.clean(json_str)
-        
-        # Try to parse
         try:
-            data = json.loads(json_str)
+            return self._load_json(cleaned_json)
         except json.JSONDecodeError:
-            # Apply repairs and try again
-            repaired = JSONCleaner.repair(json_str)
+            logger.info("Parsing failed, attempting repair...")
+            repaired = JSONCleaner.repair(cleaned_json)
             try:
-                data = json.loads(repaired)
+                return self._load_json(repaired)
             except json.JSONDecodeError:
-                # Try deep repair as last resort
-                deep_repaired = JSONCleaner.deep_repair(json_str)
-                data = json.loads(deep_repaired)
-        
+                logger.info("Standard repair failed, attempting deep repair...")
+                deep_repaired = JSONCleaner.deep_repair(cleaned_json)
+                return self._load_json(deep_repaired)
+
+    def _load_json(self, json_str: str) -> List[Dict[str, Any]]:
+        """Helper to load JSON and ensure it's a list."""
+        data = json.loads(json_str)
         return data if isinstance(data, list) else [data]

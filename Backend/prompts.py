@@ -16,30 +16,33 @@ class DataGenerationPrompts:
         """Build formatted field details for the prompt."""
         field_details = []
         for field in schema_fields:
-            field_info = f"- {field.get('name', 'unknown')}: type={field.get('type', 'string')}"
+            name = field.get('name', 'unknown')
+            f_type = field.get('type', 'string')
+            details = [f"- {name}: type={f_type}"]
             
-            if field.get('rules'):
-                field_info += f", rules={field.get('rules')}"
-            if field.get('example'):
-                field_info += f", example={field.get('example')}"
-            if field.get('min_length') is not None:
-                field_info += f", min_length={field.get('min_length')}"
-            if field.get('max_length') is not None:
-                field_info += f", max_length={field.get('max_length')}"
-            if field.get('min_value') is not None:
-                field_info += f", min_value={field.get('min_value')}"
-            if field.get('max_value') is not None:
-                field_info += f", max_value={field.get('max_value')}"
-            if field.get('pattern'):
-                field_info += f", pattern={field.get('pattern')}"
-            if field.get('enum_values'):
-                field_info += f", allowed_values={field.get('enum_values')}"
+            # Attributes to include in the prompt
+            attrs = {
+                'rules': 'rules',
+                'example': 'example',
+                'min_length': 'min_length',
+                'max_length': 'max_length',
+                'min_value': 'min_value',
+                'max_value': 'max_value',
+                'pattern': 'pattern',
+                'enum_values': 'allowed_values'
+            }
+            
+            for key, label in attrs.items():
+                val = field.get(key)
+                if val is not None and val != "":
+                    details.append(f"{label}={val}")
+            
             if field.get('nullable'):
-                field_info += ", nullable=true"
+                details.append("nullable=true")
             if field.get('unique'):
-                field_info += ", unique=true"
+                details.append("unique=true")
                 
-            field_details.append(field_info)
+            field_details.append(', '.join(details))
         
         return '\n'.join(field_details)
     
