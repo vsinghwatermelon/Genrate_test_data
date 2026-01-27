@@ -694,3 +694,95 @@ code {
 .input-item {
     border-left-color: #27ae60;
 }
+/* API Grouping Styles */
+.api-groups-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.api-group {
+    background: white;
+    border: 2px solid #9b59b6;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(155, 89, 182, 0.15);
+    transition: all 0.3s ease;
+}
+
+.api-group:hover {
+    box-shadow: 0 6px 16px rgba(155, 89, 182, 0.25);
+    transform: translateY(-2px);
+}
+
+.api-group-header {
+    background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+    color: white;
+    padding: 15px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 600;
+}
+
+.api-group-icon {
+    font-size: 20px;
+}
+
+.api-group-title {
+    flex: 1;
+    font-size: 15px;
+}
+
+.api-group-title strong {
+    color: #ffd700;
+    font-weight: 700;
+}
+
+.api-group-count {
+    background: rgba(255, 255, 255, 0.2);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.api-group-items {
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #fafafa;
+}
+
+/* Time Badge */
+.time-badge {
+    background: #e8f5e9;
+    color: #2e7d32;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid #66bb6a;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Click Association Styling */
+.click-association {
+    background: linear-gradient(135deg, #ffe8e8 0%, #fff3e0 100%);
+    border-left-color: #e74c3c !important;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+
+.click-association .detail-section-title {
+    color: #e74c3c;
+    font-weight: 700;
+}
+
+.click-association .detail-row {
+    margin-top: 6px;
+}

@@ -1,360 +1,492 @@
 """
 Selenium Script Executor
 
-Main execution logic for running user Selenium scripts with tracking.
+Orchestrates the execution of user-provided Selenium scripts while tracking all interactions.
+Handles driver setup, locator parsing, script environment preparation, and API call interception.
 """
 
 import os
 import sys
-import importlib.util
 import logging
 import tempfile
-import json
-import re
-import shutil
+import time
 import zipfile
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 
 from utils.selenium_utils import create_chrome_driver
 from utils.selenium_tracker import SeleniumActionTracker
-from utils.locator_parser import LocatorParser
-from .tracked_elements import TrackedWebElement, WebDriverProxy
+from utils.locator_parser import LocatorParser, ScriptAnalyzer
+from .tracked_elements import WebDriverProxy
 from .patches import apply_robustness_patches
 
 logger = logging.getLogger(__name__)
 
+
 class SeleniumScriptExecutor:
-    """Executes user-provided Selenium scripts with action tracking"""
-
+    """
+    Main executor for running Selenium scripts with comprehensive action tracking.
     
-    @staticmethod
-    def _apply_robustness_patches(folder_path, search_bases, locators_dict=None):
-        """
-        Dynamically find and patch SeleniumHelper class in the payload
-        to prevent common crashes and improve tab switching.
-        """
-        import importlib.util
-        import sys
-        import types
-        
-        # Search recursively for any selenium_helper.py
-        helper_files = []
-        for root, dirs, files in os.walk(folder_path):
-            if "selenium_helper.py" in files:
-                helper_files.append(os.path.join(root, "selenium_helper.py"))
+    This class provides methods to:
+    - Set up Chrome WebDriver with optional API interception
+    - Parse and load element locators from various sources
+    - Execute scripts in an isolated environment
+    - Track user interactions (clicks, inputs, API calls)
+    - Generate detailed execution summaries
+    """
 
-        for helper_path in list(set(helper_files)):
-            try:
-                # Potential names depend on which search base we are relative to
-                potential_names = set()
-                for base in search_bases:
-                    try:
-                        rel = os.path.relpath(helper_path, base)
-                        if not rel.startswith('..'):
-                            mod_name = rel.replace(".py", "").replace(os.sep, ".")
-                            potential_names.add(mod_name)
-                    except:
-                        pass
-                
-                # Also include suffixes of the longest name to be safe
-                if potential_names:
-                    longest_name = max(potential_names, key=len)
-                    parts = longest_name.split('.')
-                    for i in range(len(parts)):
-                        potential_names.add(".".join(parts[i:]))
-
-                # Import and Patch
-                spec = importlib.util.spec_from_file_location("robust_patch_mod", helper_path)
-                if spec and spec.loader:
-                    mod = importlib.util.module_from_spec(spec)
-                    # Add parent dirs to path temporarily for internal imports
-                    orig_path = sys.path.copy()
-                    sys.path.insert(0, os.path.dirname(helper_path))
-                    sys.path.insert(0, os.path.dirname(os.path.dirname(helper_path)))
-                    try:
-                        spec.loader.exec_module(mod)
-                        if hasattr(mod, 'SeleniumHelper'):
-                            cls = mod.SeleniumHelper
-                            patch_helper_class(cls, locators_dict)
-                            
-                            # Inject into sys.modules
-                            helper_dir = os.path.dirname(os.path.abspath(helper_path))
-                            for name in potential_names:
-                                parts = name.split('.')
-                                for i in range(len(parts)):
-                                    curr_name = ".".join(parts[:i+1])
-                                    if curr_name not in sys.modules:
-                                        if i == len(parts) - 1:
-                                            sys.modules[curr_name] = mod
-                                        else:
-                                            m = types.ModuleType(curr_name)
-                                            subdir = helper_dir
-                                            for _ in range(max(0, len(parts) - 2 - i)):
-                                                subdir = os.path.dirname(subdir)
-                                            m.__path__ = [subdir] if os.path.isdir(subdir) else []
-                                            sys.modules[curr_name] = m
-                                    if i > 0:
-                                        parent_name = ".".join(parts[:i])
-                                        child_name = parts[i]
-                                        if hasattr(sys.modules[parent_name], '__dict__'):
-                                            setattr(sys.modules[parent_name], child_name, sys.modules[curr_name])
-                                logger.info(f"Injected patched helper into sys.modules: {name}")
-                    finally:
-                        sys.path = orig_path
-            except Exception as e:
-                logger.error(f"Failed to patch helper at {helper_path}: {e}")
-
-    @staticmethod
-    def _patch_helper_class(cls, locators_dict=None):
-        """Apply fuzzy tab matching and descriptive error patches to a class"""
-        
-        # Inject locators if provided
-        if locators_dict:
-            if not hasattr(cls, 'locators') or not cls.locators:
-                cls.locators = locators_dict
-                logger.info(f"Injected {len(locators_dict)} locators into {cls.__name__} class")
-            else:
-                # Merge if it already exists but is a dict
-                if isinstance(cls.locators, dict):
-                    cls.locators.update(locators_dict)
-                    logger.info(f"Merged {len(locators_dict)} locators into {cls.__name__}.locators")
-        
-        # Patch switch_tab with retry logic
-        orig_switch_tab = getattr(cls, 'switch_tab', None)
-        if orig_switch_tab and not hasattr(orig_switch_tab, '_is_patched'):
-            def robust_switch_tab(self, tab_title):
-                import time
-                print(f"[PATCH] switch_tab called for: '{tab_title}'")
-                
-                # Retry loop (up to 3 times with 1.5s sleep)
-                for attempt in range(4):
-                    try:
-                        # Try original first
-                        res = orig_switch_tab(self, tab_title)
-                        if res: return True
-                    except:
-                        pass
-                    
-                    # Fuzzy match: Try to find any handle that matches
-                    if attempt == 0: print(f"[PATCH] Attempting fuzzy matching for: '{tab_title}'")
-                    try:
-                        handles = self.driver.window_handles
-                        
-                        # If only one handle, wait a bit for a new one
-                        if len(handles) < 2 and attempt < 2:
-                            time.sleep(1.5)
-                            handles = self.driver.window_handles
-
-                        matched = False
-                        available_windows = []
-                        for handle in handles:
-                            try:
-                                self.driver.switch_to.window(handle)
-                                title = self.driver.title
-                                url = self.driver.current_url
-                                available_windows.append(f"'{title}' ({url})")
-                                
-                                # 1. Exact/Substring Match
-                                if (tab_title.lower() in title.lower() or 
-                                    title.lower() in tab_title.lower() or
-                                    tab_title.lower() in url.lower() or
-                                    url.lower() in tab_title.lower()):
-                                    print(f"[PATCH] SUCCESS: Fuzzy matched tab handle: '{title}' (URL: {url})")
-                                    return True
-                                
-                                # 2. Hyper-lenient Match: Extract keywords from query and check for hits
-                                # (e.g. 'app.turtlemint.com' vs 'app.turtlemintinsurance.com')
-                                # We look for significant chunks (length > 5)
-                                query_parts = [p for p in re.split(r'[^a-zA-Z0-9]', tab_title.lower()) if len(p) > 5]
-                                if query_parts and any(p in url.lower() or p in title.lower() for p in query_parts):
-                                    print(f"[PATCH] SUCCESS: Hyper-lenient match for '{tab_title}': '{title}' (URL: {url})")
-                                    return True
-                            except: continue
-                        
-                        if attempt == 3: # Last attempt
-                             print(f"[PATCH] FAILED: No tab matched globally. Available tabs: {available_windows}")
-                    except Exception as e:
-                        logger.debug(f"Fuzzy tab switch failed: {e}")
-                    
-                    if attempt < 3:
-                        time.sleep(1.5)
-                
-                print(f"[PATCH] FAILED: No tab matched title or URL for '{tab_title}' after 4 attempts")
-                return False
-            
-            robust_switch_tab._is_patched = True
-            cls.switch_tab = robust_switch_tab
-
-        # Patch hover
-        orig_hover = getattr(cls, 'hover', None)
-        if orig_hover and not hasattr(orig_hover, '_is_patched'):
-            def robust_hover(self, locator_id):
-                print(f"[PATCH] hover called for: '{locator_id}'")
-                try:
-                    # Elements are usually found via wait_for_element in these helpers
-                    element = self.wait_for_element(locator_id)
-                    res = orig_hover(self, locator_id)
-                    if hasattr(self.driver, '_tracker'):
-                        self.driver._tracker.track_hover(element, locator_id)
-                    return res
-                except Exception as e:
-                    print(f"[PATCH] Hover failed for {locator_id}: {e}")
-                    raise
-            robust_hover._is_patched = True
-            cls.hover = robust_hover
-
-        # Patch is_verify
-        orig_verify = getattr(cls, 'is_verify', None)
-        if orig_verify and not hasattr(orig_verify, '_is_patched'):
-            def robust_verify(self, locator_id, text='', **kwargs):
-                print(f"[PATCH] is_verify called for: '{locator_id}' with text='{text}'")
-                try:
-                    element = self.wait_for_element(locator_id)
-                    res = orig_verify(self, locator_id, text=text, **kwargs)
-                    if hasattr(self.driver, '_tracker'):
-                        # Assuming verify logic is successful if it doesn't raise
-                        self.driver._tracker.track_verification(element, locator_id, text, element.text, True)
-                    return res
-                except Exception as e:
-                    if hasattr(self.driver, '_tracker'):
-                        # Try to get element for context even if verification fails
-                        try:
-                            el = self.wait_for_element(locator_id, timeout=1)
-                            self.driver._tracker.track_verification(el, locator_id, text, el.text, False)
-                        except: pass
-                    print(f"[PATCH] Verification failed for {locator_id}: {e}")
-                    raise
-            robust_verify._is_patched = True
-            cls.is_verify = robust_verify
-
-        # Patch get_text
-        orig_get_text = getattr(cls, 'get_text', None)
-        if orig_get_text and not hasattr(orig_get_text, '_is_patched'):
-            def robust_get_text(self, locator_id):
-                print(f"[PATCH] get_text called for: '{locator_id}'")
-                try:
-                    element = self.wait_for_element(locator_id)
-                    text = orig_get_text(self, locator_id)
-                    if hasattr(self.driver, '_tracker'):
-                        self.driver._tracker.track_get_text(element, locator_id, text)
-                    return text
-                except Exception as e:
-                    print(f"[PATCH] get_text failed for {locator_id}: {e}")
-                    raise
-            robust_get_text._is_patched = True
-            cls.get_text = robust_get_text
-
-        # Patch wait_for_element
-        orig_wait = getattr(cls, 'wait_for_element', None)
-        if orig_wait and not hasattr(orig_wait, '_is_patched'):
-            def robust_wait(self, locator_id, timeout=None):
-                # print(f"[PATCH] wait_for_element called for: {locator_id}")
-                element = orig_wait(self, locator_id, timeout) if timeout is not None else orig_wait(self, locator_id)
-                if element is None:
-                    # Check if locator exists at all
-                    if hasattr(self, 'get_locator_info'):
-                        loc_info = self.get_locator_info(locator_id)
-                        if not loc_info:
-                            raise Exception(f"CRITICAL: Locator ID '{locator_id}' NOT FOUND in any loaded locator config files.")
-                    
-                    raise Exception(f"CRITICAL: Element not found on page for '{locator_id}' using any provided identifier paths within timeout.")
-                return element
-            
-            robust_wait._is_patched = True
-            cls.wait_for_element = robust_wait
-
-    @staticmethod
-    def _convert_to_selenium_format(locators: Dict[str, Any]) -> Dict[str, list]:
-        """
-        Convert potentially raw locators to a list of (By.X, value) tuples.
-        """
-        selenium_locators = {}
-        for key, value in locators.items():
-            if isinstance(value, dict):
-                # If it's already a dict with by:value, convert it
-                paths = []
-                for by_str, locator_val in value.items():
-                    by_type = None
-                    b_u = by_str.upper().replace(' ', '_')
-                    if hasattr(By, b_u):
-                        by_type = getattr(By, b_u)
-                    elif b_u == 'CSS':
-                        by_type = By.CSS_SELECTOR
-                    
-                    if by_type:
-                        if isinstance(locator_val, list):
-                            for v in locator_val: paths.append((by_type, v))
-                        else:
-                            paths.append((by_type, locator_val))
-                selenium_locators[key] = paths
-            else:
-                # Fallback or already converted
-                selenium_locators[key] = value
-        return selenium_locators
+    # ============================================================================
+    # SECTION 1: Driver Setup & Configuration
+    # ============================================================================
     
     @staticmethod
     def setup_driver(headless: bool = True, use_wire: bool = False) -> webdriver.Chrome:
         """
-        Setup Chrome WebDriver with options.
-        This method is now simplified to instantiate SeleniumHelper and return its driver.
+        Create and configure a Chrome WebDriver instance.
+        
+        Sets up a WebDriver with optional selenium-wire for API interception,
+        adds helper methods for test data generation, and applies fixes for
+        common script compatibility issues.
         
         Args:
-            headless: Whether to run browser in headless mode
-            use_wire: Whether to use selenium-wire for request interception
+            headless: Run browser without visible window
+            use_wire: Enable selenium-wire for intercepting network requests
             
         Returns:
-            Configured Chrome WebDriver instance
+            Configured Chrome WebDriver ready for script execution
         """
         try:
             driver = create_chrome_driver(headless=headless, use_wire=use_wire)
             
-            # Wrapper for driver to fix common script issues
-            original_implicitly_wait = driver.implicitly_wait
-            def wrapped_implicitly_wait(time_to_wait):
+            # Fix scripts that pass strings to implicitly_wait instead of integers
+            original_wait = driver.implicitly_wait
+            def safe_implicitly_wait(time_to_wait):
                 if isinstance(time_to_wait, str):
                     try:
                         time_to_wait = int(time_to_wait)
-                    except:
-                        time_to_wait = 10 # Fallback
-                return original_implicitly_wait(time_to_wait)
+                    except ValueError:
+                        time_to_wait = 10  # Sensible default
+                return original_wait(time_to_wait)
             
-            driver.implicitly_wait = wrapped_implicitly_wait
+            driver.implicitly_wait = safe_implicitly_wait
             
-            # Add custom methods to driver that scripts might expect
+            # Add test data generation helper to driver
             def get_test_data_value(key, default=None):
                 """
-                Generate dynamic test data based on field name.
-                No hardcoded values - creates contextual placeholders.
+                Generate contextual test data based on field name.
+                Creates reasonable placeholder values instead of hardcoded data.
                 """
-                k = str(key).lower()
-                if 'email' in k:
+                field_name = str(key).lower()
+                
+                # Email fields
+                if 'email' in field_name:
                     return f"user_{key}@example.com"
-                elif 'phone' in k or 'mobile' in k:
+                    
+                # Phone/mobile fields
+                if 'phone' in field_name or 'mobile' in field_name:
                     return "1234567890"
-                elif 'name' in k:
+                    
+                # Name fields
+                if 'name' in field_name:
                     return f"Test_{key}"
-                elif 'date' in k or 'dob' in k:
+                    
+                # Date fields
+                if 'date' in field_name or 'dob' in field_name:
                     return "01/01/2000"
-                elif 'pin' in k or 'zip' in k or 'postal' in k:
+                    
+                # Location fields
+                if 'pin' in field_name or 'zip' in field_name or 'postal' in field_name:
                     return "000000"
-                elif 'city' in k:
+                if 'city' in field_name:
                     return "TestCity"
-                elif 'state' in k:
+                if 'state' in field_name:
                     return "TestState"
-                elif 'age' in k:
+                    
+                # Age field
+                if 'age' in field_name:
                     return "25"
-                else:
-                    return default or f'test_{key}'
+                    
+                # Default fallback
+                return default or f'test_{key}'
             
-            # Attach custom methods to driver instance
             driver.get_test_data_value = get_test_data_value
             
             return driver
+            
         except Exception as e:
             logger.error(f"Failed to setup WebDriver: {str(e)}")
             raise
+
+    # ============================================================================
+    # SECTION 2: Locator Processing
+    # ============================================================================
+    
+    @staticmethod
+    def _convert_to_selenium_format(locators: Dict[str, Any]) -> Dict[str, list]:
+        """
+        Transform raw locator definitions into Selenium-compatible format.
+        
+        Converts dictionary-based locator definitions (e.g., {"css": ".btn"})
+        into tuples of (By.CSS_SELECTOR, ".btn") that Selenium understands.
+        
+        Args:
+            locators: Raw locator definitions from config files
+            
+        Returns:
+            Dict mapping locator IDs to lists of (By type, value) tuples
+        """
+        selenium_locators = {}
+        
+        for locator_id, locator_value in locators.items():
+            if not isinstance(locator_value, dict):
+                # Already in correct format or unsupported  
+                selenium_locators[locator_id] = locator_value
+                continue
+            
+            # Convert each locator strategy to (By type, value) tuple
+            paths = []
+            for strategy, value in locator_value.items():
+                # Normalize strategy name (e.g., "CSS" -> "CSS_SELECTOR")
+                normalized = strategy.upper().replace(' ', '_')
+                by_type = getattr(By, normalized, None) if hasattr(By, normalized) else None
+                
+                # Special case for CSS
+                if normalized == 'CSS':
+                    by_type = By.CSS_SELECTOR
+                
+                if by_type:
+                    # Support both single values and lists
+                    values = value if isinstance(value, list) else [value]
+                    paths.extend((by_type, v) for v in values)
+            
+            selenium_locators[locator_id] = paths
+        
+        return selenium_locators
+
+    @staticmethod
+    def _load_locators_from_folder(folder_path: str) -> Dict[str, list]:
+        """
+        Recursively scan folder for locator definitions in Python and JSON files.
+        
+        Searches through all files in the folder and extracts locator configurations
+        from Python files (e.g., locators_config.py) and JSON files.
+        
+        Args:
+            folder_path: Root directory to search for locator files
+            
+        Returns:
+            Dictionary of all unique locators found, converted to Selenium format
+        """
+        print(f"\n[LOCATORS] Scanning for locator definitions...")
+        locators_dict = {}
+        
+        # Find all potential locator source files
+        potential_sources = []
+        for root, _, files in os.walk(folder_path):
+            for filename in files:
+                if filename.endswith(('.py', '.json')) and not filename.startswith('__'):
+                    potential_sources.append(os.path.join(root, filename))
+        
+        print(f"[LOCATORS] Found {len(potential_sources)} potential source files")
+        
+        # Parse each file and collect locators
+        for source_file in potential_sources:
+            try:
+                parsed = LocatorParser.parse_file(source_file)
+                if parsed:
+                    converted = SeleniumScriptExecutor._convert_to_selenium_format(parsed)
+                    locators_dict.update(converted)
+                    if converted:
+                        print(f"[LOCATORS]   ✓ {len(converted)} locators from {os.path.basename(source_file)}")
+            except Exception:
+                # Silently skip files that can't be parsed
+                continue
+        
+        print(f"[LOCATORS] ✓ Loaded {len(locators_dict)} unique locators total\n")
+        return locators_dict
+
+    # ============================================================================
+    # SECTION 3: Environment Preparation
+    # ============================================================================
+    
+    @staticmethod
+    def _prepare_execution_environment(folder_path: str, script_dir: str, locator_files: list):
+        """
+        Set up Python import paths and module isolation for script execution.
+        
+        Ensures the user's script can import its own modules (config, utils, etc.)
+        without conflicts with the backend's modules. Creates missing __init__.py
+        files to support package imports.
+        
+        Args:
+            folder_path: Root folder of the uploaded script
+            script_dir: Directory containing the main script file  
+            locator_files: List of locator file paths (for determining search paths)
+            
+        Returns:
+            tuple: (search_bases, original_modules, original_sys_path)
+        """
+        # Remove backend modules that might conflict with user's imports
+        conflicting_modules = ['config', 'utils', 'selenium_helper', 'locators_config', 'keys_config']
+        original_modules = {}
+        
+        for module_name in conflicting_modules:
+            if module_name in sys.modules:
+                original_modules[module_name] = sys.modules.pop(module_name)
+                logger.debug(f"Temporarily removed {module_name} from sys.modules")
+        
+        # Build import search paths prioritizing user's code
+        backend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        original_sys_path = sys.path.copy()
+        filtered_paths = [p for p in original_sys_path if not p.startswith(backend_path)]
+        
+        # Priority order: script folder, payload root, locator parent dirs
+        locator_parent_dirs = list(set([os.path.dirname(os.path.dirname(f)) for f in locator_files]))
+        search_bases = [script_dir, folder_path] + locator_parent_dirs
+        
+        # Create __init__.py files for package imports
+        for root, dirs, _ in os.walk(folder_path):
+            for directory in dirs:
+                init_file = os.path.join(root, directory, "__init__.py")
+                if not os.path.exists(init_file):
+                    try:
+                        with open(init_file, 'w') as f:
+                            pass
+                        logger.debug(f"Created __init__.py in {os.path.join(root, directory)}")
+                    except Exception as e:
+                        logger.debug(f"Could not create __init__.py: {e}")
+        
+        sys.path = search_bases + filtered_paths
+        
+        return search_bases, original_modules, original_sys_path
+
+    @staticmethod
+    def _create_execution_namespace(proxy_driver, script_path):
+        """
+        Build the namespace (global variables) for script execution.
+        
+        Provides the driver and common Selenium imports so user scripts
+        don't need to manually import them.
+        
+        Args:
+            proxy_driver: Wrapped WebDriver with tracking capabilities
+            script_path: Path to the script being executed
+            
+        Returns:
+            Dictionary containing driver and Selenium utilities
+        """
+        namespace = {
+            'driver': proxy_driver,
+            '__file__': script_path,
+            '__name__': '__main__',
+            'undefined': None,  # Some scripts check for undefined values
+            'args': {},  # Empty args dict for scripts expecting command-line args
+        }
+        
+        # Add common Selenium imports for convenience
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.common.keys import Keys
+            from selenium.webdriver.common.action_chains import ActionChains
+            from selenium.webdriver.support.ui import Select
+            from selenium.common.exceptions import (
+                NoSuchElementException, TimeoutException, StaleElementReferenceException,
+                ElementClickInterceptedException, ElementNotInteractableException, WebDriverException
+            )
+            
+            namespace.update({
+                'By': By,
+                'WebDriverWait': WebDriverWait,
+                'EC': EC,
+                'Keys': Keys,
+                'ActionChains': ActionChains,
+                'Select': Select,
+                'NoSuchElementException': NoSuchElementException,
+                'TimeoutException': TimeoutException,
+                'StaleElementReferenceException': StaleElementReferenceException,
+                'ElementClickInterceptedException': ElementClickInterceptedException,
+                'ElementNotInteractableException': ElementNotInteractableException,
+                'WebDriverException': WebDriverException,
+            })
+        except ImportError:
+            # Older Selenium versions might not have all these
+            pass
+        
+        return namespace
+
+    @staticmethod
+    def _setup_driver_interception(driver, tracker):
+        """
+        Monkey-patch Selenium's WebDriver constructors.
+        
+        This ensures that if the user script tries to create its own driver
+        (e.g., driver = webdriver.Chrome()), it gets our tracked proxy driver
+        instead of creating an untracked new instance.
+        
+        Args:
+            driver: The real WebDriver instance to wrap
+            tracker: Action tracker for recording interactions
+            
+        Returns:
+            tuple: (proxy_driver, original_constructors_dict)
+        """
+        from selenium import webdriver as wd
+        import selenium.webdriver.chrome.webdriver as chrome_mod
+        import selenium.webdriver.remote.webdriver as remote_mod
+        
+        # Save original constructors
+        originals = {
+            'selenium_chrome': wd.Chrome,
+            'selenium_remote': wd.Remote,
+            'chrome_webdriver': chrome_mod.WebDriver,
+            'remote_webdriver': remote_mod.WebDriver,
+        }
+        
+        # Create proxy driver
+        proxy_driver = WebDriverProxy(driver, tracker)
+        
+        # Replace constructors with factory returning our proxy
+        def mock_factory(*args, **kwargs):
+            logger.debug("Script tried to create new driver - returning tracked proxy instead")
+            return proxy_driver
+        
+        wd.Chrome = mock_factory
+        wd.Remote = mock_factory
+        chrome_mod.WebDriver = mock_factory
+        remote_mod.WebDriver = mock_factory
+        
+        return proxy_driver, originals
+
+    @staticmethod
+    def _restore_driver_constructors(originals):
+        """
+        Restore original Selenium WebDriver constructors after script execution.
+        
+        Args:
+            originals: Dictionary of original constructor functions
+        """
+        try:
+            from selenium import webdriver as wd
+            import selenium.webdriver.chrome.webdriver as chrome_mod
+            import selenium.webdriver.remote.webdriver as remote_mod
+            
+            wd.Chrome = originals.get('selenium_chrome', wd.Chrome)
+            wd.Remote = originals.get('selenium_remote', wd.Remote)
+            chrome_mod.WebDriver = originals.get('chrome_webdriver', chrome_mod.WebDriver)
+            remote_mod.WebDriver = originals.get('remote_webdriver', remote_mod.WebDriver)
+        except Exception:
+            pass
+
+    # ============================================================================
+    # SECTION 4: API Call Collection
+    # ============================================================================
+    
+    @staticmethod
+    def _collect_api_calls(driver, tracker):
+        """
+        Extract and filter API calls from selenium-wire's request log.
+        
+        Only captures APIs that were triggered by user clicks (within 3 seconds).
+        Filters out page loads, assets, and other non-API traffic.
+        
+        Args:
+            driver: selenium-wire enabled WebDriver
+            tracker: Action tracker containing click timestamps
+            
+        Returns:
+            tuple: (captured_count, skipped_count)
+        """
+        print(f"\n[API COLLECTION] Processing intercepted network requests...")
+        
+        real_driver = getattr(driver, '_driver', driver)
+        
+        if not hasattr(real_driver, 'requests'):
+            print(f"[API COLLECTION] ⚠️  selenium-wire not active - driver missing 'requests' attribute")
+            return 0, 0
+        
+        all_requests = real_driver.requests
+        print(f"[API COLLECTION] Total requests captured: {len(all_requests)}")
+        print(f"[API COLLECTION] Click events tracked: {len(tracker.click_events)}")
+        
+        # Can't associate APIs without click events
+        if not tracker.click_events:
+            print(f"[API COLLECTION] ⚠️  No clicks detected - skipping API capture")
+            return 0, 0
+        
+        captured_count = 0
+        skipped_count = 0
+        
+        for request in all_requests:
+            if not request.response:
+                continue
+            
+            # Identify API requests using multiple signals
+            is_api = False
+            content_type = request.response.headers.get('Content-Type', '').lower()
+            
+            # Check for API indicators
+            if request.headers.get('X-Requested-With', '').lower() == 'xmlhttprequest':
+                is_api = True
+            elif request.headers.get('Sec-Fetch-Dest', '').lower() == 'empty':
+                is_api = True
+            elif any(t in content_type for t in ['application/json', 'application/xml', 'text/xml']):
+                is_api = True
+            elif request.method in ['POST', 'PUT', 'PATCH', 'DELETE']:
+                is_api = True
+            elif any(pattern in request.url.lower() for pattern in ['/api/', 'v1/', 'v2/', 'graphql', '.json']):
+                is_api = True
+            
+            if not is_api:
+                continue
+            
+            # Get API timestamp (use response Date header if available)
+            api_timestamp = time.time()
+            try:
+                if request.response.headers.get('Date'):
+                    from email.utils import parsedate_to_datetime
+                    api_timestamp = parsedate_to_datetime(request.response.headers['Date']).timestamp()
+            except Exception:
+                pass
+            
+            # Find which click triggered this API
+            associated_click = tracker.find_associated_click(api_timestamp)
+            
+            if associated_click:
+                # Extract response body if available
+                response_body = None
+                try:
+                    if request.response.body:
+                        response_body = request.response.body
+                except Exception:
+                    pass
+                
+                # Record this API call with click association
+                tracker.track_api_call(
+                    url=request.url,
+                    method=request.method,
+                    payload=request.body,
+                    headers=dict(request.headers),
+                    response_code=request.response.status_code,
+                    response_body=response_body,
+                    triggered_by=associated_click["locator"],
+                    time_after_click=associated_click["time_after_click"]
+                )
+                captured_count += 1
+            else:
+                skipped_count += 1
+        
+        print(f"[API COLLECTION] ✓ Captured {captured_count} click-triggered APIs")
+        print(f"[API COLLECTION] → Skipped {skipped_count} non-click-triggered requests\n")
+        
+        return captured_count, skipped_count
+
+    # ============================================================================
+    # SECTION 5: Script Execution
+    # ============================================================================
     
     @staticmethod
     def execute_script_with_tracking(
@@ -365,262 +497,110 @@ class SeleniumScriptExecutor:
         use_wire: bool = False
     ) -> Dict[str, Any]:
         """
-        Execute a Selenium script and track all actions
+        Execute a Selenium script and track all user interactions.
+        
+        This is the main entry point for script execution. It:
+        1. Loads element locators from config files
+        2. Sets up Chrome WebDriver with optional API interception
+        3. Prepares an isolated execution environment
+        4. Runs the user's script while tracking all actions
+        5. Collects API calls triggered by clicks
+        6. Generates a comprehensive summary
         
         Args:
-            script_path: Path to the main Selenium script
+            script_path: Full path to the main Selenium script file
             locator_files: List of paths to locator configuration files
-            folder_path: Path to the folder containing the script
-            headless: Whether to run browser in headless mode
-            use_wire: Whether to use selenium-wire for request interception
+            folder_path: Root directory of the uploaded script folder
+            headless: Whether to run browser in headless mode (no GUI)
+            use_wire: Whether to use selenium-wire for API interception
             
         Returns:
-            Dictionary with tracked actions and results
+            Dictionary containing:
+                - success: True if execution completed, False if error
+                - tracked_actions: Summary of all recorded interactions
+                - script_path: Name of the executed script
+                - locators_loaded: Count of locators found
+                - error: Error message if success=False
         """
         driver = None
         tracker = SeleniumActionTracker()
-        original_sys_path = sys.path.copy()
+        original_sys_path = None
         script_dir = None
-        folder_path_to_clean = folder_path
         
         try:
             print("\n" + "="*80)
-            print("EXECUTING SELENIUM SCRIPT WITH ACTION TRACKING")
+            print("SELENIUM SCRIPT EXECUTION WITH ACTION TRACKING")
             print("="*80)
             
-            # Step 1: Parse locators from all potential sources in the payload
-            print(f"\n[STEP 1] Scanning for locators across all files...")
-            locators_dict = {}
+            # Load all locator definitions from the uploaded folder
+            locators_dict = SeleniumScriptExecutor._load_locators_from_folder(folder_path)
             
-            # We recursively scan the folder_path for any .py or .json files
-            # to ensure we don't miss any locator definitions
-            potential_sources = []
-            for root, dirs, files in os.walk(folder_path):
-                for f in files:
-                    if f.endswith(('.py', '.json')) and not f.startswith('__'):
-                        potential_sources.append(os.path.join(root, f))
-            
-            print(f"  → Found {len(potential_sources)} potential locator sources.")
-            
-            for source_file in potential_sources:
-                try:
-                    # Skip the main script file itself if we want, or include it
-                    # (including it is safer for inline locators)
-                    parsed_locators = LocatorParser.parse_file(source_file)
-                    if parsed_locators:
-                        selenium_locators = SeleniumScriptExecutor._convert_to_selenium_format(parsed_locators)
-                        locators_dict.update(selenium_locators)
-                        # Only print if we actually found something significant
-                        if len(selenium_locators) > 0:
-                            print(f"  ✓ Found {len(selenium_locators)} locators in {os.path.basename(source_file)}")
-                except: continue
-            
-            print(f"[STEP 1] ✓ Total unique locators loaded: {len(locators_dict)}")
-            
-            # Step 2: Setup WebDriver
-            print(f"\n[STEP 2] Setting up Chrome WebDriver (headless={headless}, wire={use_wire})...")
+            # Create Chrome WebDriver
+            print(f"[DRIVER SETUP] Initializing Chrome (headless={headless}, API interception={use_wire})...")
             driver = SeleniumScriptExecutor.setup_driver(headless=headless, use_wire=use_wire)
-            print("[STEP 2] ✓ WebDriver ready")
+            print("[DRIVER SETUP] ✓ WebDriver ready\n")
             
-            # Step 3: Load script
-            print(f"\n[STEP 3] Loading script: {os.path.basename(script_path)}")
+            # Load the script content
+            print(f"[SCRIPT] Loading {os.path.basename(script_path)}...")
             with open(script_path, 'r', encoding='utf-8-sig', errors='replace') as f:
                 script_content = f.read()
+            print("[SCRIPT] ✓ Script loaded\n")
             
-            # Step 4: Execute script with injected tracker
-            print(f"\n[STEP 4] Executing script with action tracking...")
-            print("-"*80)
-            
-            # Prepare execution environment
+            # Prepare isolated execution environment
+            print("[ENVIRONMENT] Setting up import paths and module isolation...")
             script_dir = os.path.dirname(script_path)
+            search_bases, original_modules, original_sys_path = \
+                SeleniumScriptExecutor._prepare_execution_environment(folder_path, script_dir, locator_files)
+            print("[ENVIRONMENT] ✓ Environment ready\n")
             
-            # Handle Module Isolation and Path Priority
-            # First, clean up sys.modules to remove any conflicting 'config' or 'utils' modules
-            # that might have been loaded by the Backend itself.
-            conflicting_modules = ['config', 'utils', 'selenium_helper', 'locators_config', 'keys_config']
-            original_modules = {}
-            for mod_name in conflicting_modules:
-                if mod_name in sys.modules:
-                    original_modules[mod_name] = sys.modules.pop(mod_name)
-                    logger.debug(f"Temporarily removed {mod_name} from sys.modules")
+            # Set up driver interception and tracking
+            proxy_driver, original_constructors = \
+                SeleniumScriptExecutor._setup_driver_interception(driver, tracker)
             
-            # Build new sys.path with user's folders at the VERY BEGINNING
-            # We want to ensure that 'import config' finds the user's config folder/file.
-            backend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-            filtered_paths = [p for p in original_sys_path if not p.startswith(backend_path)]
+            # Create script execution namespace
+            exec_namespace = SeleniumScriptExecutor._create_execution_namespace(proxy_driver, script_path)
             
-            # Priority: 1. Script folder, 2. Root folder of payload
-            # AND 3. Parent directories of all locator files found (to support nested 'config' packages)
-            locator_parent_dirs = list(set([os.path.dirname(os.path.dirname(f)) for f in locator_files]))
-            search_bases = [script_dir, folder_path] + locator_parent_dirs
+            # Execute the script
+            print("[EXECUTION] Running script with tracking enabled...")
+            print("-" * 80)
             
-            # Ensure __init__.py exists in all subdirectories to support dotted imports
-            for root, dirs, files in os.walk(folder_path):
-                for d in dirs:
-                    init_file = os.path.join(root, d, "__init__.py")
-                    if not os.path.exists(init_file):
-                        try:
-                            with open(init_file, 'w') as f:
-                                pass
-                            logger.debug(f"Created missing __init__.py in {os.path.join(root, d)}")
-                        except Exception as e:
-                            logger.debug(f"Failed to create __init__.py in {os.path.join(root, d)}: {e}")
-
-            sys.path = search_bases + filtered_paths
-            
-            # Wrap driver with proxy for active_element tracking
-            proxy_driver = WebDriverProxy(driver, tracker)
-            
-            # Global Monkey-patching to intercept all webdriver creations
-            import selenium.webdriver
-            import selenium.webdriver.chrome.webdriver as chrome_mod
-            import selenium.webdriver.remote.webdriver as remote_mod
-            
-            orig_chrome = selenium.webdriver.Chrome
-            orig_remote = selenium.webdriver.Remote
-            orig_chrome_mod = chrome_mod.WebDriver
-            orig_remote_mod = remote_mod.WebDriver
-            
-            # Function to return our proxy driver instead of a new one
-            def mock_driver_factory(*a, **k):
-                print(f"[DEBUG] Mock driver factory called! Returning proxy driver.")
-                return proxy_driver
-            
-            selenium.webdriver.Chrome = mock_driver_factory
-            selenium.webdriver.Remote = mock_driver_factory
-            chrome_mod.WebDriver = mock_driver_factory
-            remote_mod.WebDriver = mock_driver_factory
-            
-            # Create base namespace for script execution
-            exec_namespace = {
-                'driver': proxy_driver,
-                '__file__': script_path,
-                '__name__': '__main__',
-                'undefined': None,
-                'args': {}, 
-            }
-            
-            # Add common selenium components to namespace for convenience
             try:
-                from selenium.webdriver.common.by import By
-                from selenium.webdriver.support.ui import WebDriverWait
-                from selenium.webdriver.support import expected_conditions as EC
-                from selenium.webdriver.common.keys import Keys
-                from selenium.webdriver.common.action_chains import ActionChains
-                from selenium.webdriver.support.ui import Select
-                from selenium.common.exceptions import (
-                    NoSuchElementException, TimeoutException, StaleElementReferenceException,
-                    ElementClickInterceptedException, ElementNotInteractableException, WebDriverException
-                )
-                
-                exec_namespace.update({
-                    'By': By, 'WebDriverWait': WebDriverWait, 'EC': EC, 'Keys': Keys,
-                    'ActionChains': ActionChains, 'Select': Select,
-                    'NoSuchElementException': NoSuchElementException, 'TimeoutException': TimeoutException,
-                    'StaleElementReferenceException': StaleElementReferenceException,
-                    'ElementClickInterceptedException': ElementClickInterceptedException,
-                    'ElementNotInteractableException': ElementNotInteractableException,
-                    'WebDriverException': WebDriverException,
-                })
-            except ImportError:
-                pass
-            
-            
-            # Step 5: Execute the script
-            try:
-                # Link tracker with namespace for expression resolution
+                # Link tracker to namespace for expression resolution
                 setattr(tracker, '_exec_namespace', exec_namespace)
                 
-                # Apply robustness patches to any SeleniumHelper classes in the payload
+                # Apply robustness patches to SeleniumHelper classes
                 apply_robustness_patches(folder_path, search_bases, locators_dict)
                 
-                # We use exec with the prepared namespace and isolated sys.modules
+                # Run the script
                 exec(script_content, exec_namespace)
-                print("-"*80)
-                print("[STEP 5] ✓ Script execution completed")
+                
+                print("-" * 80)
+                print("[EXECUTION] ✓ Script completed successfully\n")
+                
             except Exception as script_error:
-                logger.error(f"Error during script execution: {str(script_error)}")
-                print(f"[STEP 5] ⚠️  Script execution encountered an error: {str(script_error)}")
+                logger.error(f"Script execution error: {str(script_error)}")
+                print(f"[EXECUTION] ⚠️  Script encountered an error: {str(script_error)}\n")
                 import traceback
                 traceback.print_exc()
             
-            # Step 5.5: Collect API calls if using selenium-wire
+            # Collect API calls if selenium-wire is enabled
             if use_wire:
-                real_driver = getattr(driver, '_driver', driver)
-                print(f"\n[STEP 5.5] Processing intercepted API calls (Fetch/XHR)...")
-                print(f"  → Driver type: {type(real_driver).__name__}")
-                
-                if hasattr(real_driver, 'requests'):
-                    all_requests = real_driver.requests
-                    print(f"  → Total requests in storage: {len(all_requests)}")
-                    
-                    for request in all_requests:
-                        if request.response:
-                            content_type = request.response.headers.get('Content-Type', '').lower()
-                            fetch_mode = request.headers.get('Sec-Fetch-Mode', '')
-                            xhr = request.headers.get('X-Requested-With', '')
-                            
-                            # BROAD DYNAMIC FILTERING: Capture common API patterns
-                            should_capture = False
-                            
-                            # 1. X-Requested-With (Standard for AJAX)
-                            if request.headers.get('X-Requested-With', '').lower() == 'xmlhttprequest':
-                                should_capture = True
-                                
-                            # 2. Sec-Fetch-Dest (empty usually implies fetch/XHR)
-                            elif request.headers.get('Sec-Fetch-Dest', '').lower() == 'empty':
-                                should_capture = True
-                                
-                            # 3. Common API content types in RESPONSE
-                            elif any(t in content_type for t in ['application/json', 'application/xml', 'text/xml', 'application/x-javascript']):
-                                should_capture = True
-                            
-                            # 4. Request Method (POST/PUT/PATCH/DELETE are usually API calls)
-                            elif request.method in ['POST', 'PUT', 'PATCH', 'DELETE']:
-                                should_capture = True
-                            
-                            # 5. URL patterns (common API indicators)
-                            elif any(p in request.url.lower() for p in ['/api/', 'v1/', 'v2/', 'graphql', '.json']):
-                                should_capture = True
-
-                            if should_capture:
-                                 # Capture response body if available
-                                 response_body = None
-                                 try:
-                                     if request.response and request.response.body:
-                                         response_body = request.response.body
-                                 except:
-                                     pass
-                                 
-                                 tracker.track_api_call(
-                                     url=request.url,
-                                     method=request.method,
-                                     payload=request.body,
-                                     headers=dict(request.headers),
-                                     response_code=request.response.status_code,
-                                     response_body=response_body
-                                 )
-                    
-                    print(f"[STEP 5.5] ✓ Processed {len(tracker.api_calls)} API calls")
-                else:
-                     print(f"[WARN] use_wire=True but driver has no 'requests' attribute. Selenium-wire might not be active.")
-
-            # Step 6: Restore original modules to sys.modules
-            for mod_name, mod_obj in original_modules.items():
-                sys.modules[mod_name] = mod_obj
-                logger.debug(f"Restored {mod_name} to sys.modules")
+                SeleniumScriptExecutor._collect_api_calls(driver, tracker)
             
-            # Step 7: Generate summary
-            print("\n[STEP 7] Generating action summary...")
-            # Capture final screenshot
+            # Restore original modules
+            for module_name, module_obj in original_modules.items():
+                sys.modules[module_name] = module_obj
+            
+            # Generate execution summary
+            print("[SUMMARY] Generating action tracking report...")
             tracker.capture_screenshot(driver, label="Final State")
             tracker.print_summary()
             summary = tracker.get_summary()
-            print("[STEP 7] ✓ Summary generated")
+            print("[SUMMARY] ✓ Report generated\n")
             
-            print("\n" + "="*80)
+            print("=" * 80)
             print("EXECUTION COMPLETED")
-            print("="*80 + "\n")
+            print("=" * 80 + "\n")
             
             return {
                 "success": True,
@@ -630,7 +610,7 @@ class SeleniumScriptExecutor:
             }
             
         except Exception as e:
-            logger.error(f"Error executing script: {str(e)}")
+            logger.error(f"Execution failed: {str(e)}")
             import traceback
             traceback.print_exc()
             
@@ -641,19 +621,11 @@ class SeleniumScriptExecutor:
             }
             
         finally:
-            # Restore original selenium components if they were patched
-            try:
-                import selenium.webdriver
-                import selenium.webdriver.chrome.webdriver as chrome_mod
-                import selenium.webdriver.remote.webdriver as remote_mod
-                if 'orig_chrome' in locals(): selenium.webdriver.Chrome = orig_chrome
-                if 'orig_remote' in locals(): selenium.webdriver.Remote = orig_remote
-                if 'orig_chrome_mod' in locals(): chrome_mod.WebDriver = orig_chrome_mod
-                if 'orig_remote_mod' in locals(): remote_mod.WebDriver = orig_remote_mod
-            except:
-                pass
-
-            # Cleanup
+            # Restore Selenium constructors
+            if 'original_constructors' in locals():
+                SeleniumScriptExecutor._restore_driver_constructors(original_constructors)
+            
+            # Close browser
             if driver:
                 try:
                     driver.quit()
@@ -661,15 +633,13 @@ class SeleniumScriptExecutor:
                 except Exception as e:
                     logger.error(f"Error closing WebDriver: {str(e)}")
             
-            # Restore original sys.path
-            try:
+            # Restore Python path
+            if original_sys_path:
                 sys.path = original_sys_path
-            except:
-                # Fallback: remove user's paths manually
-                if folder_path in sys.path:
-                    sys.path.remove(folder_path)
-                if script_dir and script_dir in sys.path:
-                    sys.path.remove(script_dir)
+
+    # ============================================================================
+    # SECTION 6: ZIP File Handling
+    # ============================================================================
     
     @staticmethod
     def execute_from_zip(
@@ -678,38 +648,38 @@ class SeleniumScriptExecutor:
         use_wire: bool = False
     ) -> Dict[str, Any]:
         """
-        Extract zip file and execute the Selenium script inside
+        Extract and execute a Selenium script from a ZIP file.
+        
+        Convenience method that handles ZIP extraction, script identification,
+        and execution in one call. The ZIP file is extracted to a temporary
+        directory that's cleaned up automatically after execution.
         
         Args:
-            zip_path: Path to zip file containing Selenium script
+            zip_path: Path to ZIP file containing the Selenium script
             headless: Whether to run browser in headless mode
-            use_wire: Whether to use selenium-wire for request interception
+            use_wire: Whether to use selenium-wire for API interception
             
         Returns:
-            Dictionary with tracked actions and results
+            Same dictionary as execute_script_with_tracking()
         """
-        import zipfile
-        
-        # Create temp directory for extraction
         with tempfile.TemporaryDirectory() as tmpdir:
-            print(f"\nExtracting zip to: {tmpdir}")
+            print(f"\n[ZIP] Extracting to temporary directory: {tmpdir}")
             
-            # Extract zip
+            # Extract ZIP contents
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(tmpdir)
+            print(f"[ZIP] ✓ Extraction complete\n")
             
-            # Find script and locator files
-            from utils.locator_parser import ScriptAnalyzer
-            
+            # Find the main script and locator files
             main_script, locator_files = ScriptAnalyzer.identify_script_files(tmpdir)
             
             if not main_script:
                 return {
                     "success": False,
-                    "error": "No Selenium script found in uploaded folder"
+                    "error": "No Selenium script found in ZIP file"
                 }
             
-            # Execute script
+            # Execute the script
             return SeleniumScriptExecutor.execute_script_with_tracking(
                 script_path=main_script,
                 locator_files=locator_files,

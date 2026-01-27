@@ -1,7 +1,12 @@
 """
-Tracked Web Elements  
+Tracked Web Elements
 
-Wrapper classes for Selenium WebDriver and WebElement that inject action tracking.
+Wrapper classes that intercept Selenium WebDriver and WebElement operations
+to record user interactions (clicks, inputs, hovers) for test data generation.
+
+This module provides two main classes:
+- TrackedWebElement: Wraps individual elements to track interactions
+- WebDriverProxy: Wraps the driver to intercept element finding and script execution
 """
 
 import inspect
@@ -12,213 +17,326 @@ from selenium.webdriver.common.by import By
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# SECTION 1: TrackedWebElement - Element-Level Tracking
+# ============================================================================
+
 class TrackedWebElement:
-    """Wrapper for WebElement that tracks click and send_keys."""
+    """
+    Wrapper for Selenium WebElement that records clicks and inputs.
+    
+    When a script clicks or types into an element, this class:
+    1. Records the interaction in the tracker
+    2. Forwards the action to the real element
+    3. Resolves dynamic values from args.get() expressions
+    """
     
     def __init__(self, element, tracker, locator=""):
+        """
+        Create a tracked element wrapper.
+        
+        Args:
+            element: The real Selenium WebElement
+            tracker: SeleniumActionTracker instance
+            locator: Human-readable locator string (e.g., "css=.login-btn")
+        """
         self._element = element
         self._tracker = tracker
         self._locator = locator or "unknown"
     
     def __getattr__(self, name):
+        """Forward all other attribute access to the real element."""
         if self._element is None:
-            raise AttributeError(f"TrackedWebElement has no underlying element for '{self._locator}', cannot access '{name}'")
+            raise AttributeError(
+                f"TrackedWebElement has no underlying element for '{self._locator}', "
+                f"cannot access '{name}'"
+            )
         return getattr(self._element, name)
     
     def click(self, *args, **kwargs):
+        """Track click action and forward to real element."""
         self._tracker.track_click(self._element, self._locator)
+        
         if self._element is None:
             raise AttributeError(f"Cannot click None element for {self._locator}")
+        
         return self._element.click(*args, **kwargs)
     
-    def _resolve_mock_value(self, key, default=None):
-        """
-        Generate dynamic placeholder based on key name.
-        No hardcoded test data - generates contextual placeholders.
-        """
-        k = str(key).lower()
-        # Generate contextual placeholder based on field name
-        if 'email' in k:
-            return f"user_{key}@example.com"
-        elif 'phone' in k or 'mobile' in k:
-            return "1234567890"
-        elif 'name' in k:
-            return f"Test_{key}"
-        elif 'date' in k or 'dob' in k:
-            return "01/01/2000"
-        elif 'pin' in k or 'zip' in k or 'postal' in k:
-            return "000000"
-        elif 'city' in k:
-            return "TestCity"
-        elif 'state' in k:
-            return "TestState"
-        elif 'age' in k:
-            return "25"
-        else:
-            return default or f'test_{key}'
-
     def send_keys(self, *args, **kwargs):
-        """Send keys with smart value resolution from args.get() calls."""
-        new_args = []
-        exec_ns = getattr(self._tracker, '_exec_namespace', {}).copy()
+        """
+        Track input and send keys with smart value resolution.
         
-        # Try to find 'args' in the stack
-        caller_args = {}
-        curr_frame = inspect.currentframe()
-        try:
-            while curr_frame:
-                if 'args' in curr_frame.f_locals and isinstance(curr_frame.f_locals['args'], dict):
-                    caller_args.update(curr_frame.f_locals['args'])
-                    break
-                curr_frame = curr_frame.f_back
-        finally:
-            del curr_frame
-
-        if caller_args:
-            if 'args' not in exec_ns:
-                exec_ns['args'] = {}
-            exec_ns['args'].update(caller_args)
-        
+        This method resolves expressions like args.get('username', 'default')
+        into actual values from the script's args dictionary.
+        """
+        # Resolve any expressions in the arguments
+        resolved_args = []
         for arg in args:
             if isinstance(arg, str) and ("args.get" in arg or "get_test_data_value" in arg):
-                # Try regex for common args.get('key', 'default') pattern
-                match = re.search(r"args\.get\(['\"]([^'\"]+)['\"]\s*,\s*([^)]+)\)", arg)
-                if match:
-                    key, default_raw = match.groups()
-                    default = default_raw.strip().strip("'").strip('"')
-                    resolved = caller_args.get(key)
-                    lower_key = key.lower()
-                    
-                    # Look for better alternatives for sensitive fields
-                    if 'pass' in lower_key or 'user' in lower_key or 'email' in lower_key:
-                        alternatives = []
-                        for k, v in caller_args.items():
-                            if k == key: continue
-                            kl = k.lower()
-                            if ('pass' in kl and 'pass' in lower_key) or \
-                               (('user' in kl or 'email' in kl or 'login' in kl) and \
-                                ('user' in lower_key or 'email' in lower_key)):
-                                alternatives.append({k: v})
-                        
-                        if alternatives and len(alternatives) == 1:
-                            # Use the alternative
-                            alt_key = list(alternatives[0].keys())[0]
-                            alt_val = alternatives[0][alt_key]
-                            if alt_val and str(alt_val).strip():
-                                resolved = alt_val
-                        elif not resolved or not str(resolved).strip():
-                            # Try finding in nested structures
-                            for k, v in caller_args.items():
-                                if isinstance(v, dict):
-                                    if key in v:
-                                        resolved = v[key]
-                                        break
-                                    for sub_k, sub_v in v.items():
-                                        if sub_k.lower() == lower_key:
-                                            resolved = sub_v
-                                            break
-                    
-                    if not resolved or not str(resolved).strip():
-                        # Try mock registry
-                        resolved = self._resolve_mock_value(key, default)
-                    
-                    new_args.append(str(resolved) if resolved is not None else default)
-                else:
-                    # Couldn't parse, try to evaluate it
-                    try:
-                        exec_ns_copy = exec_ns.copy()
-                        result = eval(arg, exec_ns_copy)
-                        new_args.append(str(result) if result is not None else arg)
-                    except:
-                        new_args.append(arg)
+                resolved_args.append(self._resolve_expression(arg))
             else:
-                new_args.append(arg)
+                resolved_args.append(arg)
         
-        # Track and send
-        value_str = " ".join(str(a) for a in new_args)
+        # Track the input
+        value_str = " ".join(str(a) for a in resolved_args)
         self._tracker.track_field_input(self._element, self._locator, value_str)
+        
         if self._element is None:
             raise AttributeError(f"Cannot send_keys to None element for {self._locator}")
-        return self._element.send_keys(*new_args, **kwargs)
+        
+        return self._element.send_keys(*resolved_args, **kwargs)
+    
+    def _resolve_expression(self, expression):
+        """
+        Resolve a string expression into a value.
+        
+        Handles:
+        - args.get('key', 'default') patterns
+        - Nested args dictionaries
+        - Fallback to generated test data
+        """
+        # Try to parse args.get('key', 'default') pattern
+        match = re.search(r"args\.get\(['\"]([^'\"]+)['\"]\s*,\s*([^)]+)\)", expression)
+        if match:
+            key, default_raw = match.groups()
+            default = default_raw.strip().strip("'").strip('"')
+            
+            # Get the args dictionary from caller's context
+            caller_args = self._find_args_in_stack()
+            
+            # Look for the key in args
+            value = caller_args.get(key)
+            
+            # If not found or empty, search nested dictionaries
+            if not value or not str(value).strip():
+                value = self._search_nested_args(caller_args, key)
+            
+            # Still nothing? Generate test data
+            if not value or not str(value).strip():
+                value = self._generate_test_value(key, default)
+            
+            return str(value) if value is not None else default
+        
+        # Couldn't parse as args.get(), try to evaluate it
+        try:
+            exec_namespace = getattr(self._tracker, '_exec_namespace', {}).copy()
+            result = eval(expression, exec_namespace)
+            return str(result) if result is not None else expression
+        except Exception:
+            return expression
+    
+    def _find_args_in_stack(self):
+        """Search call stack for an 'args' dictionary."""
+        frame = inspect.currentframe()
+        try:
+            while frame:
+                if 'args' in frame.f_locals and isinstance(frame.f_locals['args'], dict):
+                    return frame.f_locals['args'].copy()
+                frame = frame.f_back
+        finally:
+            del frame
+        return {}
+    
+    def _search_nested_args(self, args_dict, key):
+        """Search for a key in nested dictionaries within args."""
+        key_lower = key.lower()
+        
+        for arg_key, arg_value in args_dict.items():
+            if isinstance(arg_value, dict):
+                # Direct key match
+                if key in arg_value:
+                    return arg_value[key]
+                
+                # Case-insensitive match
+                for sub_key, sub_value in arg_value.items():
+                    if sub_key.lower() == key_lower:
+                        return sub_value
+        
+        return None
+    
+    def _generate_test_value(self, key, default):
+        """
+        Generate contextual test data based on field name.
+        
+        Creates reasonable placeholders instead of using hardcoded values.
+        """
+        key_lower = key.lower()
+        
+        # Email fields
+        if 'email' in key_lower:
+            return f"user_{key}@example.com"
+        
+        # Phone/mobile fields
+        if 'phone' in key_lower or 'mobile' in key_lower:
+            return "1234567890"
+        
+        # Name fields
+        if 'name' in key_lower:
+            return f"Test_{key}"
+        
+        # Date fields
+        if 'date' in key_lower or 'dob' in key_lower:
+            return "01/01/2000"
+        
+        # Location fields
+        if any(word in key_lower for word in ['pin', 'zip', 'postal']):
+            return "000000"
+        if 'city' in key_lower:
+            return "TestCity"
+        if 'state' in key_lower:
+            return "TestState"
+        
+        # Age field
+        if 'age' in key_lower:
+            return "25"
+        
+        # Default fallback
+        return default or f'test_{key}'
     
     def __repr__(self):
         return f"TrackedWebElement({self._locator})"
 
+
+# ============================================================================
+# SECTION 2: WebDriverProxy - Driver-Level Interception
+# ============================================================================
+
 class WebDriverProxy:
-    """Proxy for WebDriver that intercepts find_element and switch_to for tracking."""
+    """
+    Proxy for Selenium WebDriver that wraps found elements for tracking.
+    
+    When a script finds an element (driver.find_element(...)), this class:
+    1. Forwards the request to the real driver
+    2. Wraps the returned element in TrackedWebElement
+    3. Ensures switch_to is also tracked
+    """
     
     def __init__(self, driver, tracker):
+        """
+        Create a driver proxy.
+        
+        Args:
+            driver: The real Selenium WebDriver instance
+            tracker: SeleniumActionTracker instance
+        """
         self._driver = driver
         self._tracker = tracker
         self._is_wrapped = True
         
-        # Wrap switch_to
+        # Wrap the switch_to object
+        self.switch_to = self._create_switch_to_wrapper(driver.switch_to, tracker)
+        
+        # Attach tracker to underlying driver so patches can access it
+        if not hasattr(self._driver, '_tracker'):
+            self._driver._tracker = tracker
+    
+    @staticmethod
+    def _create_switch_to_wrapper(switch_to, tracker):
+        """Create a wrapper for driver.switch_to that passes through all calls."""
         class WrappedSwitchTo:
             def __init__(self, st, tr):
                 self._st = st
                 self._tr = tr
+            
             def __getattr__(self, name):
                 return getattr(self._st, name)
         
-        self.switch_to = WrappedSwitchTo(driver.switch_to, tracker)
-        
-        # Attach tracker to the underlying driver so patches can find it
-        if not hasattr(self._driver, '_tracker'):
-            self._driver._tracker = tracker
+        return WrappedSwitchTo(switch_to, tracker)
     
     def find_element(self, by=By.ID, value=None):
-        """Find element and wrap it for tracking."""
+        """
+        Find an element and wrap it for tracking.
+        
+        Args:
+            by: Selenium By type (By.ID, By.CSS_SELECTOR, etc.)
+            value: Locator value
+            
+        Returns:
+            TrackedWebElement wrapping the found element
+        """
         element = self._driver.find_element(by, value)
         locator = f"{by}={value}"
         return TrackedWebElement(element, self._tracker, locator)
     
     def find_elements(self, by=By.ID, value=None):
-        """Find elements and wrap them."""
+        """Find multiple elements and wrap each one."""
         elements = self._driver.find_elements(by, value)
         locator = f"{by}={value}"
         return [TrackedWebElement(el, self._tracker, locator) for el in elements]
     
-    def _unwrap_args(self, *args):
-        """Unwrap TrackedWebElement to raw WebElement for script execution."""
-        unwrapped = []
-        for arg in args:
-            # Better check for TrackedWebElement using duck typing
-            if hasattr(arg, '_element') and hasattr(arg, '_tracker'):
-                unwrapped.append(arg._element)
-            elif isinstance(arg, list):
-                unwrapped.append([self._unwrap_args(a)[0] if (hasattr(a, '_element') and hasattr(a, '_tracker')) else a for a in arg])
-            elif isinstance(arg, dict):
-                unwrapped.append({k: (v._element if (hasattr(v, '_element') and hasattr(v, '_tracker')) else v) for k, v in arg.items()})
-            else:
-                unwrapped.append(arg)
-        return unwrapped
-
     def execute_script(self, script, *args):
-        """Execute script with tracking."""
-        return self._driver.execute_script(script, *self._unwrap_args(*args))
+        """
+        Execute JavaScript with tracking support.
+        
+        Unwraps TrackedWebElement arguments into real elements before
+        passing to the driver.
+        """
+        unwrapped_args = self._unwrap_elements(args)
+        return self._driver.execute_script(script, *unwrapped_args)
     
     def execute_async_script(self, script, *args):
-        """Execute async script."""
-        return self._driver.execute_async_script(script, *self._unwrap_args(*args))
+        """Execute async JavaScript with element unwrapping."""
+        unwrapped_args = self._unwrap_elements(args)
+        return self._driver.execute_async_script(script, *unwrapped_args)
+    
+    def _unwrap_elements(self, args):
+        """
+        Recursively unwrap TrackedWebElement to raw WebElement.
+        
+        JavaScript execution needs real elements, not our wrappers.
+        """
+        unwrapped = []
+        
+        for arg in args:
+            # Check if it's a TrackedWebElement (using duck typing)
+            if hasattr(arg, '_element') and hasattr(arg, '_tracker'):
+                unwrapped.append(arg._element)
+            
+            # Unwrap lists
+            elif isinstance(arg, list):
+                unwrapped.append([
+                    self._unwrap_single(item) for item in arg
+                ])
+            
+            # Unwrap dictionaries
+            elif isinstance(arg, dict):
+                unwrapped.append({
+                    key: self._unwrap_single(value) 
+                    for key, value in arg.items()
+                })
+            
+            # Pass through everything else
+            else:
+                unwrapped.append(arg)
+        
+        return unwrapped
+    
+    def _unwrap_single(self, item):
+        """Unwrap a single item if it's a TrackedWebElement."""
+        if hasattr(item, '_element') and hasattr(item, '_tracker'):
+            return item._element
+        return item
+    
+    def quit(self):
+        """
+        Soft quit - doesn't actually close the browser.
+        
+        Scripts often call driver.quit() at the end, but we need the browser
+        to stay open so we can capture screenshots and collect logs.
+        """
+        logger.info("Script called driver.quit() - ignoring to preserve session")
+        print("[DEBUG] Script called driver.quit() - ignoring to keep driver alive")
+        return None
+    
+    def close(self):
+        """Soft close - doesn't close the current tab."""
+        logger.info("Script called driver.close() - ignoring to preserve session")
+        print("[DEBUG] Script called driver.close() - ignoring to keep driver alive")
+        return None
     
     def __getattr__(self, name):
-        """Delegate all other attributes to wrapped driver."""
+        """Forward all other attribute access to the real driver."""
         return getattr(self._driver, name)
     
     def __repr__(self):
         return f"WebDriverProxy({self._driver})"
-    
-    def quit(self):
-        """
-        Soft quit. We don't actually quit here because the main executor 
-        needs to collect logs and screenshots after the script finishes.
-        """
-        logger.info("Script called driver.quit() - ignoring to keep driver alive for tracking")
-        print("[DEBUG] Script called driver.quit() - ignoring to keep driver alive for tracking")
-        return None
-    
-    def close(self):
-        """Soft close."""
-        logger.info("Script called driver.close() - ignoring to keep driver alive for tracking")
-        print("[DEBUG] Script called driver.close() - ignoring to keep driver alive for tracking")
-        return None

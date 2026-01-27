@@ -772,49 +772,108 @@ function ScriptExecutor({ onSchemaGenerated }) {
                             )}
                             {executionResult.tracked_actions.api_calls?.length > 0 && (
                                 <div className="actions-section">
-                                    <h4>🌐 Intercepted API Calls</h4>
-                                    <div className="actions-list">
-                                        {executionResult.tracked_actions.api_calls.map((call, idx) => (
-                                            <div key={idx} className="action-item api-item">
-                                                <div className="action-header">
-                                                    <span className="action-number">#{idx + 1}</span>
-                                                    <span className={`method-badge method-${call.method.toLowerCase()}`}>{call.method}</span>
-                                                    <span className="action-url" title={call.url}>{call.url}</span>
-                                                    {call.response_code && (
-                                                        <span className={`status-badge status-${String(call.response_code)[0]}xx`}>
-                                                            {call.response_code}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="action-details">
-                                                    {call.payload && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">📦 Payload</div>
-                                                            <div className="detail-row code-row">
-                                                                <pre className="detail-code">
-                                                                    {typeof call.payload === 'object'
-                                                                        ? JSON.stringify(call.payload, null, 2)
-                                                                        : String(call.payload).substring(0, 500) + (String(call.payload).length > 500 ? '...' : '')}
-                                                                </pre>
-                                                            </div>
+                                    <h4>🌐 Intercepted API Calls (Click-Triggered)</h4>
+
+                                    {(() => {
+                                        // Group APIs by the click that triggered them
+                                        const apisByClick = {};
+                                        executionResult.tracked_actions.api_calls.forEach(call => {
+                                            const trigger = call.triggered_by_click || 'No Click Association';
+                                            if (!apisByClick[trigger]) {
+                                                apisByClick[trigger] = [];
+                                            }
+                                            apisByClick[trigger].push(call);
+                                        });
+
+                                        return (
+                                            <div className="api-groups-container">
+                                                {Object.entries(apisByClick).map(([clickLocator, apis], groupIdx) => (
+                                                    <div key={groupIdx} className="api-group">
+                                                        <div className="api-group-header">
+                                                            <span className="api-group-icon">🖱️</span>
+                                                            <span className="api-group-title">
+                                                                Triggered by: <strong>{clickLocator}</strong>
+                                                            </span>
+                                                            <span className="api-group-count">
+                                                                {apis.length} API call{apis.length !== 1 ? 's' : ''}
+                                                            </span>
                                                         </div>
-                                                    )}
-                                                    {call.response_body && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">📥 Response</div>
-                                                            <div className="detail-row code-row">
-                                                                <pre className="detail-code">
-                                                                    {typeof call.response_body === 'object'
-                                                                        ? JSON.stringify(call.response_body, null, 2)
-                                                                        : String(call.response_body).substring(0, 500) + (String(call.response_body).length > 500 ? '...' : '')}
-                                                                </pre>
-                                                            </div>
+
+                                                        <div className="api-group-items">
+                                                            {apis.map((call, idx) => (
+                                                                <div key={idx} className="action-item api-item">
+                                                                    <div className="action-header">
+                                                                        <span className="action-number">#{idx + 1}</span>
+                                                                        <span className={`method-badge method-${call.method.toLowerCase()}`}>
+                                                                            {call.method}
+                                                                        </span>
+                                                                        <span className="action-url" title={call.url}>
+                                                                            {call.url}
+                                                                        </span>
+                                                                        {call.response_code && (
+                                                                            <span className={`status-badge status-${String(call.response_code)[0]}xx`}>
+                                                                                {call.response_code}
+                                                                            </span>
+                                                                        )}
+                                                                        {call.time_after_click !== undefined && (
+                                                                            <span className="time-badge" title="Time after click">
+                                                                                ⏱️ +{call.time_after_click.toFixed(2)}s
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="action-details">
+                                                                        {/* Click Association Info */}
+                                                                        {call.triggered_by_click && call.time_after_click !== undefined && (
+                                                                            <div className="detail-section click-association">
+                                                                                <div className="detail-section-title">🎯 Click Association</div>
+                                                                                <div className="detail-row">
+                                                                                    <span className="detail-label">Triggered by:</span>
+                                                                                    <span className="detail-value" style={{ fontWeight: '600', color: '#e74c3c' }}>
+                                                                                        {call.triggered_by_click}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div className="detail-row">
+                                                                                    <span className="detail-label">Time after click:</span>
+                                                                                    <span className="detail-value">
+                                                                                        {call.time_after_click.toFixed(3)} seconds
+                                                                                    </span>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+
+                                                                        {call.payload && (
+                                                                            <div className="detail-section">
+                                                                                <div className="detail-section-title">📦 Payload</div>
+                                                                                <div className="detail-row code-row">
+                                                                                    <pre className="detail-code">
+                                                                                        {typeof call.payload === 'object'
+                                                                                            ? JSON.stringify(call.payload, null, 2)
+                                                                                            : String(call.payload).substring(0, 500) + (String(call.payload).length > 500 ? '...' : '')}
+                                                                                    </pre>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                        {call.response_body && (
+                                                                            <div className="detail-section">
+                                                                                <div className="detail-section-title">📥 Response</div>
+                                                                                <div className="detail-row code-row">
+                                                                                    <pre className="detail-code">
+                                                                                        {typeof call.response_body === 'object'
+                                                                                            ? JSON.stringify(call.response_body, null, 2)
+                                                                                            : String(call.response_body).substring(0, 500) + (String(call.response_body).length > 500 ? '...' : '')}
+                                                                                    </pre>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
                                                         </div>
-                                                    )}
-                                                </div>
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
-                                    </div>
+                                        );
+                                    })()}
                                 </div>
                             )}
                         </>

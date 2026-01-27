@@ -8,6 +8,7 @@ structured data about the interactions.
 
 import logging
 import base64
+import time
 from typing import List, Dict, Any
 from selenium.webdriver.remote.webelement import WebElement
 try:
@@ -27,16 +28,28 @@ class SeleniumActionTracker:
     during Selenium script execution.
     """
     
-    def __init__(self):
+    def __init__(self, api_capture_window=3.0):
         self.clicked_elements = []
         self.filled_fields = []
         self.actions_log = []
         self.screenshots = []
         self.api_calls = []
+        self.click_events = []  # Track click timestamps for API association
+        self.api_capture_window = api_capture_window  # Time window in seconds after click to capture APIs
     
-    def track_api_call(self, url: str, method: str, payload: Any, headers: Dict[str, str], response_code: int = None, response_body: Any = None):
+    def track_api_call(self, url: str, method: str, payload: Any, headers: Dict[str, str], response_code: int = None, response_body: Any = None, triggered_by: str = None, time_after_click: float = None):
         """
         Track an intercepted API call (Fetch/XHR)
+        
+        Args:
+            url: API endpoint URL
+            method: HTTP method (GET, POST, etc.)
+            payload: Request payload/body
+            headers: Request headers
+            response_code: HTTP response status code
+            response_body: Response body
+            triggered_by: Locator of the click that triggered this API (if applicable)
+            time_after_click: Time in seconds after the click when this API was called
         """
         api_info = {
             "action": "api_call",
@@ -45,13 +58,24 @@ class SeleniumActionTracker:
             "payload": payload,
             "headers": headers,
             "response_code": response_code,
-            "response_body": response_body
+            "response_body": response_body,
+            "triggered_by_click": triggered_by,
+            "time_after_click": time_after_click
         }
         self.api_calls.append(api_info)
         self.actions_log.append(api_info)
         
-        # Log to console
-        print(f"[API] {method} {url}")
+        # Log to console with click association
+        if triggered_by:
+            print(f"[API] {method} {url}")
+            print(f"      ✓ Triggered by click: '{triggered_by}' ({time_after_click:.2f}s after click)")
+            if response_code:
+                print(f"      Status: {response_code}")
+        else:
+            print(f"[API] {method} {url}")
+            if response_code:
+                print(f"      Status: {response_code}")
+        
         if payload:
             # Try to format payload if it's JSON
             try:
@@ -407,11 +431,22 @@ class SeleniumActionTracker:
             description: Optional description of the element
         """
         try:
+            # Record click timestamp for API association
+            click_timestamp = time.time()
+            
             # Get comprehensive element information
             element_info = self._extract_element_info(element, locator, "click", description)
+            element_info["timestamp"] = click_timestamp
             
             self.clicked_elements.append(element_info)
             self.actions_log.append(element_info)
+            
+            # Track this click event for API association
+            self.click_events.append({
+                "timestamp": click_timestamp,
+                "locator": locator,
+                "element_info": element_info
+            })
             
             # Log to console
             logger.info(f"[CLICK] {locator} | Tag: {element_info.get('tag_name', 'unknown')} | Purpose: {element_info.get('exact_purpose', 'unknown')}")
@@ -503,6 +538,37 @@ class SeleniumActionTracker:
         except Exception as e:
             logger.error(f"Error tracking get_text for {locator}: {str(e)}")
 
+    def find_associated_click(self, api_timestamp: float) -> Dict[str, Any]:
+        """
+        Find the click event that triggered this API call based on timestamp.
+        Returns the click event if API occurred within the capture window after a click.
+        
+        Args:
+            api_timestamp: Timestamp of the API call
+            
+        Returns:
+            Dictionary with click event info, or None if no associated click found
+        """
+        # Find the most recent click before this API call
+        associated_click = None
+        min_time_diff = float('inf')
+        
+        for click_event in self.click_events:
+            click_time = click_event["timestamp"]
+            time_diff = api_timestamp - click_time
+            
+            # API must occur AFTER the click and within the capture window
+            if 0 <= time_diff <= self.api_capture_window:
+                if time_diff < min_time_diff:
+                    min_time_diff = time_diff
+                    associated_click = {
+                        "locator": click_event["locator"],
+                        "time_after_click": time_diff,
+                        "element_info": click_event["element_info"]
+                    }
+        
+        return associated_click
+    
     def track_tab_switch(self, tab_index_or_handle, description: str = ""):
         """
         Track a tab switch
@@ -666,42 +732,62 @@ class SeleniumActionTracker:
         
         if self.api_calls:
             print("\n" + "-"*80)
-            print("INTERCEPTED API CALLS (FETCH/XHR):")
+            print("INTERCEPTED API CALLS (CLICK-TRIGGERED):")
             print("-"*80)
-            for idx, call in enumerate(self.api_calls, 1):
-                print(f"\n{idx}. [{call['method']}] {call['url']}")
-                if call.get('response_code'):
-                    print(f"   Status: {call['response_code']}")
-                
-                # Show Payload
-                if call.get('payload'):
-                    try:
-                        if isinstance(call['payload'], bytes):
-                            p_str = call['payload'].decode('utf-8', errors='replace')
-                        else:
-                            p_str = str(call['payload'])
-                        print(f"   Payload: {p_str[:200]}{'...' if len(p_str) > 200 else ''}")
-                    except:
-                        pass
-                
-                # Show Response Body
-                if call.get('response_body'):
-                    try:
-                        import json
-                        if isinstance(call['response_body'], bytes):
-                            r_str = call['response_body'].decode('utf-8', errors='replace')
-                        else:
-                            r_str = str(call['response_body'])
-                        
+            
+            # Group APIs by the click that triggered them
+            apis_by_click = {}
+            for call in self.api_calls:
+                trigger = call.get('triggered_by_click', 'Unknown')
+                if trigger not in apis_by_click:
+                    apis_by_click[trigger] = []
+                apis_by_click[trigger].append(call)
+            
+            # Display grouped by click
+            for click_locator, apis in apis_by_click.items():
+                print(f"\n┌─ APIs triggered by: '{click_locator}' ({len(apis)} call{'s' if len(apis) != 1 else ''})")
+                print("│")
+                for idx, call in enumerate(apis, 1):
+                    time_after = call.get('time_after_click')
+                    time_str = f" [{time_after:.2f}s after click]" if time_after is not None else ""
+                    print(f"│  {idx}. [{call['method']}] {call['url']}{time_str}")
+                    
+                    if call.get('response_code'):
+                        print(f"│     Status: {call['response_code']}")
+                    
+                    # Show Payload
+                    if call.get('payload'):
                         try:
-                            # Try to format as JSON if possible
-                            r_json = json.loads(r_str)
-                            r_pretty = json.dumps(r_json, indent=2)
-                            print(f"   Response: {r_pretty[:500]}{'...' if len(r_pretty) > 500 else ''}")
+                            if isinstance(call['payload'], bytes):
+                                p_str = call['payload'].decode('utf-8', errors='replace')
+                            else:
+                                p_str = str(call['payload'])
+                            print(f"│     Payload: {p_str[:200]}{'...' if len(p_str) > 200 else ''}")
                         except:
-                            print(f"   Response: {r_str[:200]}{'...' if len(r_str) > 200 else ''}")
-                    except:
-                        pass
+                            pass
+                    
+                    # Show Response Body
+                    if call.get('response_body'):
+                        try:
+                            import json
+                            if isinstance(call['response_body'], bytes):
+                                r_str = call['response_body'].decode('utf-8', errors='replace')
+                            else:
+                                r_str = str(call['response_body'])
+                            
+                            try:
+                                # Try to format as JSON if possible
+                                r_json = json.loads(r_str)
+                                r_pretty = json.dumps(r_json, indent=2)
+                                print(f"│     Response: {r_pretty[:500]}{'...' if len(r_pretty) > 500 else ''}")
+                            except:
+                                print(f"│     Response: {r_str[:200]}{'...' if len(r_str) > 200 else ''}")
+                        except:
+                            pass
+                    
+                    if idx < len(apis):
+                        print("│")
+                print("└" + "─"*79)
 
         print("\n" + "="*80 + "\n")
 
