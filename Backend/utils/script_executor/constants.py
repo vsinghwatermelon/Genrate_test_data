@@ -5,7 +5,7 @@ Configuration constants for the script executor module.
 """
 
 # API Call Association
-API_CAPTURE_WINDOW_SECONDS = 3.0  # Time window after click to capture APIs
+API_CAPTURE_WINDOW_SECONDS = 5.0  # Time window after click to capture APIs
 
 # Browser Configuration
 DEFAULT_IMPLICIT_WAIT_SECONDS = 10  # Default wait time for element finding

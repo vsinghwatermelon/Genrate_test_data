@@ -404,17 +404,17 @@ def _patch_select(cls):
 
 def _patch_click(cls):
     """
-    Add logging to click method.
+    Add logging and robust fallback to click method.
     
     The actual tracking is done by TrackedWebElement, but this adds
-    logging output for debugging.
+    logging output and a JavaScript fallback for intercepted clicks.
     """
     original = getattr(cls, 'click', None)
     if not original or hasattr(original, '_is_patched'):
         return
     
     def robust_click(self, locator_id, *args, **kwargs):
-        """Click with logging."""
+        """Click with logging and JS fallback."""
         print(f"[CLICK] {locator_id}")
         try:
             # Check if element exists before calling original
@@ -425,10 +425,35 @@ def _patch_click(cls):
                 if tracker: tracker.track_skip(locator_id, "click")
                 return None
             
-            return original(self, locator_id, *args, **kwargs)
+            try:
+                return original(self, locator_id, *args, **kwargs)
+            except Exception as e:
+                # Capture ANY interaction exception for fallback
+                err_msg = str(e).lower()
+                print(f"[CLICK] ⚠️ Click attempt failed: {e}")
+                print(f"[CLICK] 🔄 Attempting direct JS click fallback...")
+                
+                try:
+                    # Unwrap element if it's a proxy
+                    raw_element = element._element if hasattr(element, '_element') else element
+                    self.driver.execute_script("arguments[0].click();", raw_element)
+                    
+                    # Track this fallback click if not already tracked by the original attempt
+                    tracker = getattr(self.driver, '_tracker', None)
+                    if tracker:
+                        tracker.track_click(raw_element, locator_id, description="JS Fallback Click")
+                    
+                    print(f"[CLICK] ✓ JS fallback click successful")
+                    return True
+                except Exception as js_err:
+                    print(f"[CLICK] ✗ JS fallback also failed: {js_err}")
+                    # Re-raise original if fallback fails
+                    raise e
         except Exception as e:
-            print(f"[CLICK] ✗ Failed for '{locator_id}': {e}")
-            raise
+            # Silently handle failures to keep script moving if possible, 
+            # but print for debugging
+            print(f"[CLICK] ✗ Critical failure for '{locator_id}': {e}")
+            return False
     
     robust_click._is_patched = True
     cls.click = robust_click
@@ -577,34 +602,60 @@ def _patch_wait_for_element(cls):
             # Silence selenium errors
             element = None
         
-        if element is None:
-            # Multi-layer locator lookup
-            locator_info = None
+        if element is not None:
+            # If it's a TrackedWebElement, associate it with the logical locator ID
+            if hasattr(element, '_locator') and locator_id:
+                element._locator = locator_id
+            return element
             
-            # 1. Try instance methods
-            if hasattr(self, 'get_locator_info'):
-                locator_info = self.get_locator_info(locator_id)
-            
-            # 2. Try instance/class dictionary fallback
-            if not locator_info:
-                locs = getattr(self, 'locators', {}) or getattr(self.__class__, 'locators', {})
-                if isinstance(locs, dict):
-                    locator_info = locs.get(locator_id)
-                
-            # 3. Try global driver fallback (injected by executor.py)
-            if not locator_info and hasattr(self, 'driver'):
-                locator_info = getattr(self.driver, '_locators', {}).get(locator_id)
-            elif not locator_info and hasattr(self, '_driver'): # Proxy style
-                locator_info = getattr(self._driver, '_locators', {}).get(locator_id)
-                
-            if not locator_info:
-                print(f"[WAIT] ⚠️ Warning: Locator '{locator_id}' not found in any config files!")
-            else:
-                print(f"[WAIT] ⚠️ Warning: Element '{locator_id}' not found on page within timeout.")
-                
-            return None # Return None to support 'if element:' logic in user scripts
+        # If element is None, try to be ultra-robust: maybe locator_id IS a selector?
+        if isinstance(locator_id, str) and any(locator_id.startswith(p) for p in ['/', '(', '.', '#', '[', 'css=', 'xpath=']):
+            print(f"[WAIT] ⚠️ Trying '{locator_id}' as raw selector...")
+            try:
+                from selenium.webdriver.common.by import By
+                by = By.XPATH if locator_id.startswith(('/', '(')) else By.CSS_SELECTOR
+                # Handle explicit prefix
+                val = locator_id
+                if locator_id.startswith('css='):
+                    by = By.CSS_SELECTOR
+                    val = locator_id[4:]
+                elif locator_id.startswith('xpath='):
+                    by = By.XPATH
+                    val = locator_id[6:]
+                    
+                element = self.driver.find_element(by, val)
+                if element:
+                    if hasattr(element, '_locator'):
+                        element._locator = locator_id
+                    return element
+            except Exception:
+                pass
+
+        # Multi-layer locator lookup for error reporting
+        locator_info = None
         
-        return element
+        # 1. Try instance methods
+        if hasattr(self, 'get_locator_info'):
+            locator_info = self.get_locator_info(locator_id)
+        
+        # 2. Try instance/class dictionary fallback
+        if not locator_info:
+            locs = getattr(self, 'locators', {}) or getattr(self.__class__, 'locators', {})
+            if isinstance(locs, dict):
+                locator_info = locs.get(locator_id)
+            
+        # 3. Try global driver fallback (injected by executor.py)
+        if not locator_info and hasattr(self, 'driver'):
+            locator_info = getattr(self.driver, '_locators', {}).get(locator_id)
+        elif not locator_info and hasattr(self, '_driver'): # Proxy style
+            locator_info = getattr(self._driver, '_locators', {}).get(locator_id)
+            
+        if not locator_info:
+            print(f"[WAIT] ⚠️ Warning: Locator '{locator_id}' not found in any config files!")
+        else:
+            print(f"[WAIT] ⚠️ Warning: Element '{locator_id}' not found on page within timeout.")
+            
+        return None # Return None to support 'if element:' logic in user scripts
     
     robust_wait._is_patched = True
     cls.wait_for_element = robust_wait

@@ -19,7 +19,7 @@ from selenium.webdriver.common.by import By
 from utils.selenium_utils import create_chrome_driver
 from utils.selenium_tracker import SeleniumActionTracker
 from utils.locator_parser import LocatorParser, ScriptAnalyzer
-from .tracked_elements import WebDriverProxy
+from .tracked_elements import WebDriverProxy, TrackedActionChains
 from .patches import apply_robustness_patches
 
 logger = logging.getLogger(__name__)
@@ -201,20 +201,11 @@ class SeleniumScriptExecutor:
             try:
                 parsed = LocatorParser.parse_file(source_file)
                 if parsed:
-                    # Flatten: if parsed is {'locators': {...}}, we want the contents
-                    to_merge = {}
-                    for k, v in parsed.items():
-                        if isinstance(v, dict) and any(ik in str(v.keys()) for ik in ['xpath', 'css', 'id']):
-                            # It's a single locator definition
-                            to_merge[k] = v
-                        elif isinstance(v, dict):
-                            # It's a dictionary of locators (like 'locators = { ... }')
-                            to_merge.update(v)
-                        else:
-                            # Scalar value, probably a constant
-                            to_merge[k] = v
+                    # Use the advanced normalizer to handle nesting and Selenium formats
+                    normalized = LocatorParser.normalize_locator_data(parsed)
                     
-                    converted = SeleniumScriptExecutor._convert_to_selenium_format(to_merge)
+                    # Convert to Selenium format (tuples)
+                    converted = SeleniumScriptExecutor._convert_to_selenium_format(normalized)
                     locators_dict.update(converted)
                     
                     if converted:
@@ -310,19 +301,26 @@ class SeleniumScriptExecutor:
             from selenium.webdriver.support.ui import WebDriverWait
             from selenium.webdriver.support import expected_conditions as EC
             from selenium.webdriver.common.keys import Keys
-            from selenium.webdriver.common.action_chains import ActionChains
+            from selenium.webdriver.common.action_chains import ActionChains as RealActionChains
             from selenium.webdriver.support.ui import Select
             from selenium.common.exceptions import (
                 NoSuchElementException, TimeoutException, StaleElementReferenceException,
                 ElementClickInterceptedException, ElementNotInteractableException, WebDriverException
             )
             
+            # ActionChains Factory to ensure tracking
+            def ActionChainsFactory(drv):
+                # Unwrap the driver if it's our proxy
+                real_drv = drv._driver if hasattr(drv, '_driver') else drv
+                tracker = drv._tracker if hasattr(drv, '_tracker') else proxy_driver._tracker
+                return TrackedActionChains(RealActionChains(real_drv), tracker)
+            
             namespace.update({
                 'By': By,
                 'WebDriverWait': WebDriverWait,
                 'EC': EC,
                 'Keys': Keys,
-                'ActionChains': ActionChains,
+                'ActionChains': ActionChainsFactory,
                 'Select': Select,
                 'NoSuchElementException': NoSuchElementException,
                 'TimeoutException': TimeoutException,

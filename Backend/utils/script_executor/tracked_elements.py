@@ -44,23 +44,58 @@ class TrackedWebElement:
         self._tracker = tracker
         self._locator = locator or "unknown"
     
+    def find_element(self, by=By.ID, value=None):
+        """Find a child element and wrap it for tracking."""
+        element = self._element.find_element(by, value)
+        locator = f"{self._locator} -> {by}={value}"
+        return TrackedWebElement(element, self._tracker, locator)
+    
+    def find_elements(self, by=By.ID, value=None):
+        """Find multiple child elements and wrap each one."""
+        elements = self._element.find_elements(by, value)
+        locator = f"{self._locator} -> {by}={value}"
+        return [TrackedWebElement(el, self._tracker, locator) for el in elements]
+
     def __getattr__(self, name):
-        """Forward all other attribute access to the real element."""
+        """Forward all other attribute access to the real element, wrapping finding methods."""
         if self._element is None:
             raise AttributeError(
                 f"TrackedWebElement has no underlying element for '{self._locator}', "
                 f"cannot access '{name}'"
             )
-        return getattr(self._element, name)
+        
+        attr = getattr(self._element, name)
+        
+        # Intercept and wrap child finding methods to maintain tracking chain
+        if (name.startswith("find_element") or name.startswith("find_elements")) and callable(attr):
+            def wrapper(*args, **kwargs):
+                res = attr(*args, **kwargs)
+                if isinstance(res, list):
+                    return [TrackedWebElement(el, self._tracker, f"{self._locator}.{name}({args})") for el in res]
+                else:
+                    return TrackedWebElement(res, self._tracker, f"{self._locator}.{name}({args})")
+            return wrapper
+            
+        return attr
     
     def click(self, *args, **kwargs):
-        """Track click action and forward to real element."""
-        self._tracker.track_click(self._element, self._locator)
-        
+        """Track click action and forward to real element with JS fallback."""
         if self._element is None:
             raise AttributeError(f"Cannot click None element for {self._locator}")
+            
+        self._tracker.track_click(self._element, self._locator)
         
-        return self._element.click(*args, **kwargs)
+        try:
+            return self._element.click(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"Standard click failed for {self._locator}: {e}. Trying JS fallback.")
+            try:
+                driver = self._element.parent
+                driver.execute_script("arguments[0].click();", self._element)
+                return True
+            except Exception as js_err:
+                logger.error(f"JS fallback click also failed for {self._locator}: {js_err}")
+                raise e
     
     def send_keys(self, *args, **kwargs):
         """
@@ -69,6 +104,9 @@ class TrackedWebElement:
         This method resolves expressions like args.get('username', 'default')
         into actual values from the script's args dictionary.
         """
+        if self._element is None:
+            raise AttributeError(f"Cannot send_keys to None element for {self._locator}")
+
         # Resolve any expressions in the arguments
         resolved_args = []
         for arg in args:
@@ -80,9 +118,6 @@ class TrackedWebElement:
         # Track the input
         value_str = " ".join(str(a) for a in resolved_args)
         self._tracker.track_field_input(self._element, self._locator, value_str)
-        
-        if self._element is None:
-            raise AttributeError(f"Cannot send_keys to None element for {self._locator}")
         
         return self._element.send_keys(*resolved_args, **kwargs)
     
@@ -119,6 +154,7 @@ class TrackedWebElement:
         
         # Couldn't parse as args.get(), try to evaluate it
         try:
+            # Safely use the tracker's namespace if available
             exec_namespace = getattr(self._tracker, '_exec_namespace', {}).copy()
             result = eval(expression, exec_namespace)
             return str(result) if result is not None else expression
@@ -335,8 +371,80 @@ class WebDriverProxy:
         return None
     
     def __getattr__(self, name):
-        """Forward all other attribute access to the real driver."""
-        return getattr(self._driver, name)
+        """Forward all other attribute access to the real driver, wrapping finding methods."""
+        attr = getattr(self._driver, name)
+        
+        # Intercept and wrap all finding methods (including old find_element_by_id style)
+        if (name.startswith("find_element") or name.startswith("find_elements")) and callable(attr):
+            def wrapper(*args, **kwargs):
+                res = attr(*args, **kwargs)
+                if isinstance(res, list):
+                    return [TrackedWebElement(el, self._tracker, f"driver.{name}({args})") for el in res]
+                else:
+                    return TrackedWebElement(res, self._tracker, f"driver.{name}({args})")
+            return wrapper
+            
+        return attr
     
     def __repr__(self):
         return f"WebDriverProxy({self._driver})"
+
+
+# ============================================================================
+# SECTION 3: ActionChains Tracking
+# ============================================================================
+
+class TrackedActionChains:
+    """
+    Wrapper for Selenium ActionChains that records complex interactions.
+    
+    Ensures that hover, drag-and-drop, and multi-step interactions are
+    captured in the tracker even when they don't use direct element methods.
+    """
+    
+    def __init__(self, action_chains, tracker):
+        self._ac = action_chains
+        self._tracker = tracker
+    
+    def click(self, on_element=None):
+        if on_element and hasattr(on_element, '_element'):
+            self._tracker.track_click(on_element._element, on_element._locator, "ActionChains.click")
+            return TrackedActionChains(self._ac.click(on_element._element), self._tracker)
+        return TrackedActionChains(self._ac.click(on_element), self._tracker)
+    
+    def move_to_element(self, to_element):
+        if hasattr(to_element, '_element'):
+            self._tracker.track_hover(to_element._element, to_element._locator, "ActionChains.hover")
+            return TrackedActionChains(self._ac.move_to_element(to_element._element), self._tracker)
+        return TrackedActionChains(self._ac.move_to_element(to_element), self._tracker)
+    
+    def send_keys_to_element(self, element, *keys_to_send):
+        if hasattr(element, '_element'):
+            val = "".join(str(k) for k in keys_to_send)
+            self._tracker.track_field_input(element._element, element._locator, val, "ActionChains.input")
+            return TrackedActionChains(self._ac.send_keys_to_element(element._element, *keys_to_send), self._tracker)
+        return TrackedActionChains(self._ac.send_keys_to_element(element, *keys_to_send), self._tracker)
+
+    def __getattr__(self, name):
+        """Forward all other calls and wrap the result if it's the ActionChains instance (for chaining)."""
+        attr = getattr(self._ac, name)
+        if callable(attr):
+            def wrapper(*args, **kwargs):
+                # Unwrap elements for the real Selenium call
+                unwrapped_args = []
+                for arg in args:
+                    if hasattr(arg, '_element'): unwrapped_args.append(arg._element)
+                    else: unwrapped_args.append(arg)
+                
+                unwrapped_kwargs = {}
+                for k, v in kwargs.items():
+                    if hasattr(v, '_element'): unwrapped_kwargs[k] = v._element
+                    else: unwrapped_kwargs[k] = v
+                
+                res = attr(*unwrapped_args, **unwrapped_kwargs)
+                # If it returns self (which ActionChains does for chaining), return the wrapper
+                if res is self._ac:
+                    return self
+                return res
+            return wrapper
+        return attr

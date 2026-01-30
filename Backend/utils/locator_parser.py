@@ -107,13 +107,24 @@ class LocatorParser:
                             regex_locators[key] = val_str
                     except Exception: continue
                 
-                # Pattern for anonymous selectors (strings that look like XPaths)
-                xpath_pattern = r'["\'](//[a-zA-Z0-9_.*@=\[\]\(\/\'\s\-]+)["\']'
+                # Pattern for anonymous selectors (strings that look like XPaths or CSS)
+                # Improved XPath regex
+                xpath_pattern = r'["\'](//[a-zA-Z0-9_.*@=\[\]\(\/\'\"\s\-]+)["\']'
                 for i, match in enumerate(re.finditer(xpath_pattern, content)):
                     try:
                         val = match.group(1)
-                        if val not in str(regex_locators.values()):
+                        if len(val) > 5 and val not in str(regex_locators.values()):
                             regex_locators[f"anonymous_xpath_{i}"] = {"xpath": val}
+                    except Exception: continue
+
+                # New CSS pattern: matches strings that look like CSS selectors but aren't just plain text
+                # Looks for .class, #id, or tag[attr] patterns
+                css_pattern = r'["\']([.#][a-zA-Z][a-zA-Z0-9_-]+|[a-z0-9]+\[[a-z-]+=[^\]]+\]|\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+)["\']'
+                for i, match in enumerate(re.finditer(css_pattern, content)):
+                    try:
+                        val = match.group(1)
+                        if val not in str(regex_locators.values()) and len(val) > 2:
+                            regex_locators[f"anonymous_css_{i}"] = {"css": val}
                     except Exception: continue
 
                 results.update(regex_locators)
@@ -135,46 +146,81 @@ class LocatorParser:
     def normalize_locator_data(raw_data: Dict[str, Any]) -> Dict[str, Dict[str, List[str]]]:
         """
         Standardizes diverse locator definitions into a unified internal format.
-        
-        Output Structure:
-        { "key": { "css": [...], "xpath": [...], "id": [...], "name": [...] } }
+        Recursively flattens nested dictionaries and promotes standard 'locators' keys.
         """
         normalized = {}
         
         def _process_item(key, value):
-            if not isinstance(value, (dict, list, str)): return
+            if value is None: return
             
-            entry = {'css': [], 'xpath': [], 'id': [], 'name': []}
-            
-            # Case 1: Simple string (assumed CSS or XPath)
+            # Case 1: Value is a dictionary (potential leaf or nested structure)
+            if isinstance(value, dict):
+                # Check if it's a leaf locator (has standard keys)
+                if any(ik in str(value.keys()).lower() for ik in ['css', 'xpath', 'id', 'name']):
+                    entry = {'css': [], 'xpath': [], 'id': [], 'name': []}
+                    for k, v in value.items():
+                        k_lower = k.lower()
+                        if k_lower in entry:
+                            # Handle string-encoded lists (e.g., "[ 'val1', 'val2' ]")
+                            if isinstance(v, str) and v.strip().startswith('[') and v.strip().endswith(']'):
+                                try:
+                                    import ast
+                                    v = ast.literal_eval(v)
+                                except: pass
+                                
+                            if isinstance(v, list): entry[k_lower].extend([str(x) for x in v])
+                            else: entry[k_lower].append(str(v))
+                    
+                    if any(entry.values()):
+                        normalized[key] = entry
+                        # Also add short key if it starts with 'locators.' for easier lookup
+                        if key.lower().startswith('locators.'):
+                            short_key = key[9:]
+                            if short_key not in normalized: normalized[short_key] = entry
+                    return
+
+                # If NOT a leaf, recurse
+                for sub_k, sub_v in value.items():
+                    # Promote 'locators' or 'LOCATORS' children to top level
+                    if sub_k.lower() == 'locators' and isinstance(sub_v, dict):
+                        for l_k, l_v in sub_v.items(): _process_item(l_k, l_v)
+                    else:
+                        _process_item(f"{key}.{sub_k}" if key else sub_k, sub_v)
+                return
+
+            # Case: Simple string (assumed CSS or XPath)
             if isinstance(value, str):
+                # Handle string-encoded lists for anonymous/fallback lookups
+                if value.strip().startswith('[') and value.strip().endswith(']'):
+                    try:
+                        import ast
+                        v_list = ast.literal_eval(value)
+                        if isinstance(v_list, list):
+                            entry = {'css': [], 'xpath': [], 'id': [], 'name': []}
+                            for item in v_list:
+                                if str(item).startswith(('/', '(')): entry['xpath'].append(str(item))
+                                else: entry['css'].append(str(item))
+                            normalized[key] = entry
+                            return
+                    except: pass
+
+                entry = {'css': [], 'xpath': [], 'id': [], 'name': []}
                 if value.startswith(('/', '(')): entry['xpath'].append(value)
                 else: entry['css'].append(value)
+                normalized[key] = entry
             
-            # Case 2: Tuple/List format (Selenium style: (By.ID, "val"))
+            # Case: Tuple/List format (Selenium style: (By.ID, "val"))
             elif isinstance(value, (list, tuple)) and len(value) >= 2:
+                entry = {'css': [], 'xpath': [], 'id': [], 'name': []}
                 by, val = str(value[0]).lower(), str(value[1])
                 if 'xpath' in by: entry['xpath'].append(val)
                 elif 'css' in by: entry['css'].append(val)
                 elif 'id' in by: entry['id'].append(val)
                 elif 'name' in by: entry['name'].append(val)
-            
-            # Case 3: Nested Dictionary
-            elif isinstance(value, dict):
-                for k, v in value.items():
-                    k_lower = k.lower()
-                    if k_lower in entry:
-                        if isinstance(v, list): entry[k_lower].extend([str(x) for x in v])
-                        else: entry[k_lower].append(str(v))
-            
-            if any(entry.values()): normalized[key] = entry
+                if any(entry.values()): normalized[key] = entry
 
-        # Handle flat dicts or nested class-style dicts
-        for k, v in raw_data.items():
-            if isinstance(v, dict) and not any(ik in ['css', 'xpath', 'id', 'name'] for ik in v.keys()):
-                for sub_k, sub_v in v.items(): _process_item(f"{k}.{sub_k}", sub_v)
-            else:
-                _process_item(k, v)
+        # Start initial processing
+        _process_item("", raw_data)
                 
         return normalized
 

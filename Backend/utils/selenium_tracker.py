@@ -55,8 +55,17 @@ class SeleniumActionTracker:
 
 
     def track_click(self, element: WebElement, locator: str, description: str = ""):
-        """Record a successful click and analyze the target element."""
+        """Record a successful click and analyze the target element with debounce."""
         timestamp = time.time()
+        
+        # Debounce: Ignore if same locator was clicked in last 1.5 seconds
+        if self.click_events:
+            last = self.click_events[-1]
+            if last['locator'] == locator and (timestamp - last.get('timestamp', 0)) < 1.5:
+                # Still log to console for debugging but don't add to structured data
+                logger.debug(f"[TRACKER] Debounced duplicate click on {locator}")
+                return
+
         logger.info(f"[TRACKER] Intercepted CLICK on: {locator}")
         
         # Utilize centralized analysis suite
@@ -74,8 +83,15 @@ class SeleniumActionTracker:
 
 
     def track_field_input(self, element: WebElement, locator: str, value: str, description: str = ""):
-        """Record a field modification and analyze the interaction context."""
+        """Record a field modification with debounce."""
         timestamp = time.time()
+
+        # Debounce duplicate identical inputs
+        if self.fill_events:
+            last = self.fill_events[-1]
+            if last['locator'] == locator and last.get('value_entered') == value and (timestamp - last.get('timestamp', 0)) < 1.5:
+                return
+
         logger.info(f"[TRACKER] Intercepted INPUT on: {locator} -> '{value}'")
         
         info = extract_full_element_info(element, locator, "input", description)

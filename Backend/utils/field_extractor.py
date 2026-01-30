@@ -107,10 +107,16 @@ def detect_field_type(field: Dict[str, Any]) -> str:
     if tag == 'textarea':
         return 'textarea'
     
-    # Priority 3: Role and ARIA Inference
     if 'combobox' in role or 'combobox' in input_type:
         return 'combobox'
     
+    # Priority 4: Indian Context / Financial identification
+    financial_kws = ['pan', 'aadhar', 'voter', 'pin', 'pincode', 'otp', 'card', 'gst', 'aadhaar']
+    if any(kw in name or kw in placeholder for kw in financial_kws):
+        if 'pin' in name or 'pin' in placeholder: return 'pincode'
+        if 'otp' in name: return 'otp_field'
+        return 'identifier'
+
     return 'string'
 
 

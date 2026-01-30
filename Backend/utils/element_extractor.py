@@ -260,9 +260,15 @@ def _analyze_semantic_role(tag_name: str, attributes: Dict, context: Dict) -> st
     html_role = attributes.get('role', '').lower()
     if html_role in ['option', 'menuitem'] or tag_name == 'li':
         return "dropdown_option"
-    if html_role == 'combobox' or 'select' in attributes.get('class', ''):
+    if html_role == 'combobox' or 'select' in str(attributes.get('class', '')):
         return "select"
-
+    if html_role in ['button', 'link'] or tag_name in ['button', 'a']:
+        return "button"
+    if tag_name == 'img' or html_role == 'img':
+        return "image_link"
+    if role == 'string' and tag_name in ['div', 'span']:
+        if any(kw in str(attributes.get('class', '')).lower() for kw in ['btn', 'button', 'clickable']):
+            return "button"
     return role
 
 
