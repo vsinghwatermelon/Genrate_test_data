@@ -14,7 +14,7 @@ from datetime import datetime
 from selenium.webdriver.remote.webelement import WebElement
 
 # Centralized Logic Hub Imports
-from utils.element_extractor import extract_full_element_info
+from modules.execution.extractor import extract_full_element_info
 
 logger = logging.getLogger(__name__)
 

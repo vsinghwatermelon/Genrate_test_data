@@ -16,9 +16,9 @@ from typing import Dict, Any
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 
-from utils.selenium_utils import create_chrome_driver
-from utils.selenium_tracker import SeleniumActionTracker
-from utils.locator_parser import LocatorParser, ScriptAnalyzer
+from modules.execution.utils_selenium import create_chrome_driver
+from modules.execution.tracking import SeleniumActionTracker
+from modules.execution.scanning import LocatorParser, ScriptAnalyzer
 from .tracked_elements import WebDriverProxy, TrackedActionChains
 from .patches import apply_robustness_patches
 

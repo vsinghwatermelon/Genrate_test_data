@@ -16,6 +16,9 @@ import types
 import logging
 import importlib.util
 
+from modules.shared.logger import safe_print
+from modules.execution.tracking import SeleniumActionTracker
+
 logger = logging.getLogger(__name__)
 
 

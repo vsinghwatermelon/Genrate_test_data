@@ -10,8 +10,34 @@ import logging
 from typing import Dict, Any, List, Optional
 from selenium.webdriver.remote.webelement import WebElement
 
-# Centralized Logic Import
-from utils.field_extractor import detect_field_type
+import re
+
+def detect_field_type(field: Dict[str, Any]) -> str:
+    """Infers semantic type based on element attributes and context clues."""
+    input_type = (field.get('type') or '').lower()
+    tag = (field.get('tag') or '').lower()
+    role = (field.get('role') or '').lower()
+    name = (field.get('name') or field.get('id') or '').lower()
+    placeholder = (field.get('placeholder') or '').lower()
+    
+    if input_type == 'email' or 'email' in name or 'email' in placeholder: return 'email'
+    if input_type in ['tel', 'phone'] or 'mobile' in name or 'phone' in name: return 'phone'
+    if input_type == 'number' or any(kw in name for kw in ['amount', 'income', 'salary', 'price']): return 'number'
+    if input_type in ['date', 'datetime-local'] or any(kw in name for kw in ['date', 'dob', 'birthday']): return 'date'
+    if input_type == 'checkbox': return 'checkbox'
+    if input_type == 'radio': return 'radio'
+    if tag == 'select' or input_type == 'select' or 'select' in name: return 'select'
+    if tag == 'textarea': return 'textarea'
+    if 'combobox' in role or 'combobox' in input_type: return 'combobox'
+    
+    # Financial/Indian context
+    financial = ['pan', 'aadhar', 'voter', 'pin', 'pincode', 'otp', 'card', 'gst', 'aadhaar']
+    if any(kw in name or kw in placeholder for kw in financial):
+        if 'pin' in name or 'pin' in placeholder: return 'pincode'
+        if 'otp' in name: return 'otp_field'
+        return 'identifier'
+
+    return 'string'
 
 logger = logging.getLogger(__name__)
 

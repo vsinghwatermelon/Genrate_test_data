@@ -32,3 +32,10 @@ def get_logger(name: str, level: Optional[int] = None) -> logging.Logger:
         logger.addHandler(handler)
         
     return logger
+
+def safe_print(text: str) -> None:
+    """Safe console printing (shim for backward compatibility)."""
+    try:
+        print(text)
+    except Exception:
+        pass

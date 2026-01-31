@@ -30,7 +30,7 @@ Automatic fixes for common script failures:
 ## Usage Example
 
 ```python
-from utils.script_executor import SeleniumScriptExecutor
+from modules.execution.engine import SeleniumScriptExecutor
 
 # Execute a script from a ZIP file
 result = SeleniumScriptExecutor.execute_from_zip(
@@ -51,7 +51,7 @@ else:
 ## Architecture
 
 ```
-script_executor/
+modules/execution/engine/
 ├── executor.py         # Main execution orchestration (6 sections)
 ├── patches.py          # SeleniumHelper class patches (4 sections)
 ├── tracked_elements.py # Element/driver wrappers (2 sections)

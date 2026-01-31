@@ -15,11 +15,11 @@ import time
 import logging
 from typing import Dict, List, Any, Optional, Tuple
 
-from utils.selenium_utils import create_chrome_driver
-from llm_factory import LLMFactory, BaseLLM
-from prompts import SeleniumParserPrompts
-from utils.json_utils import JSONCleaner, JSONExtractor, NDJSONParser
-from utils.console import safe_print
+from modules.execution.utils_selenium import create_chrome_driver
+from modules.shared.llm import LLMService, BaseLLM
+from modules.generation.prompts import SeleniumParserPrompts
+from modules.shared.json_utils import JSONCleaner, JSONExtractor, NDJSONParser
+from modules.shared.logger import safe_print
 
 logger = logging.getLogger(__name__)
 
@@ -347,7 +347,7 @@ class ScriptAnalyzer:
             Tuple of (Inferred Schema List, Error Message if any).
         """
         try:
-            llm = LLMFactory.create_llm(provider=provider)
+            llm = LLMService.get_llm(provider=provider)
             prompt = SeleniumParserPrompts.get_extraction_prompt(script_text)
             
             logger.info(f"Initiating AI script analysis via {provider}...")

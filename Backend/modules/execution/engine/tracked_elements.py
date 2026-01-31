@@ -14,6 +14,11 @@ import re
 import logging
 from selenium.webdriver.common.by import By
 
+# Centralized Logic Hub Imports
+from modules.execution.extractor import extract_full_element_info
+from modules.execution.tracking import SeleniumActionTracker
+from modules.execution.utils_selenium import create_chrome_driver
+
 logger = logging.getLogger(__name__)
 
 

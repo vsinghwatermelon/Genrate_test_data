@@ -28,6 +28,18 @@ function ScriptExecutor({ onSchemaGenerated }) {
     const [generationResponse, setGenerationResponse] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
 
+    // Accordion State
+    const [expandedIds, setExpandedIds] = useState(new Set());
+    const toggleExpand = (id) => {
+        const newSet = new Set(expandedIds);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setExpandedIds(newSet);
+    };
+
     // Type modal states for the inline editor
     const [showTypeModal, setShowTypeModal] = useState(false);
     const [typeModalTarget, setTypeModalTarget] = useState(null);
@@ -507,210 +519,218 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                 <div className="actions-section">
                                     <h4>🖱️ Clicked Elements</h4>
                                     <div className="actions-list">
-                                        {executionResult.tracked_actions.clicked_elements.map((elem, idx) => (
-                                            <div key={idx} className="action-item click-item">
-                                                <div className="action-header">
-                                                    <span className="action-number">#{idx + 1}</span>
-                                                    <span className="action-locator">{elem.locator}</span>
-                                                </div>
-                                                <div className="action-details">
-                                                    <div className="detail-row">
-                                                        <span className="detail-label">Tag:</span>
-                                                        <span className="detail-value"><code>&lt;{elem.tag_name}&gt;</code></span>
+                                        {executionResult.tracked_actions.clicked_elements.map((elem, idx) => {
+                                            const isExpanded = expandedIds.has(`click-${idx}`);
+                                            return (
+                                                <div key={idx} className="action-item click-item">
+                                                    <div className="action-header" onClick={() => toggleExpand(`click-${idx}`)} style={{ cursor: 'pointer' }}>
+                                                        <span className="toggle-icon" style={{ marginRight: '8px', fontSize: '12px', color: '#7f8c8d' }}>
+                                                            {isExpanded ? '▼' : '▶'}
+                                                        </span>
+                                                        <span className="action-number">#{idx + 1}</span>
+                                                        <span className="action-locator">{elem.locator}</span>
                                                     </div>
+                                                    {isExpanded && (
+                                                        <div className="action-details">
+                                                            <div className="detail-row">
+                                                                <span className="detail-label">Tag:</span>
+                                                                <span className="detail-value"><code>&lt;{elem.tag_name}&gt;</code></span>
+                                                            </div>
 
-                                                    {/* Semantic Insights */}
-                                                    {(elem.exact_purpose || elem.semantic_type) && (
-                                                        <div className="detail-section semantic-insights">
-                                                            <div className="detail-section-title">🧠 Semantic Insights</div>
-                                                            {elem.exact_purpose && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Purpose:</span>
-                                                                    <span className="detail-value" style={{ fontWeight: '600', color: '#2980b9' }}>{elem.exact_purpose}</span>
+                                                            {/* Semantic Insights */}
+                                                            {(elem.exact_purpose || elem.semantic_type) && (
+                                                                <div className="detail-section semantic-insights">
+                                                                    <div className="detail-section-title">🧠 Semantic Insights</div>
+                                                                    {elem.exact_purpose && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Purpose:</span>
+                                                                            <span className="detail-value" style={{ fontWeight: '600', color: '#2980b9' }}>{elem.exact_purpose}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.semantic_type && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Type:</span>
+                                                                            <span className="detail-value"><span className="field-type">{elem.semantic_type}</span></span>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.role_description && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Role:</span>
+                                                                            <span className="detail-value" style={{ fontStyle: 'italic', fontSize: '12px' }}>{elem.role_description}</span>
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             )}
-                                                            {elem.semantic_type && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Type:</span>
-                                                                    <span className="detail-value"><span className="field-type">{elem.semantic_type}</span></span>
-                                                                </div>
-                                                            )}
-                                                            {elem.role_description && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Role:</span>
-                                                                    <span className="detail-value" style={{ fontStyle: 'italic', fontSize: '12px' }}>{elem.role_description}</span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
 
-                                                    {/* Page Context */}
-                                                    {elem.context && Object.values(elem.context).some(v => v) && (
-                                                        <div className="detail-section page-context">
-                                                            <div className="detail-section-title">🌐 Page Context</div>
-                                                            {elem.context.container_heading && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Section:</span>
-                                                                    <span className="detail-value">{elem.context.container_heading}</span>
+                                                            {/* Page Context */}
+                                                            {elem.context && Object.values(elem.context).some(v => v) && (
+                                                                <div className="detail-section page-context">
+                                                                    <div className="detail-section-title">🌐 Page Context</div>
+                                                                    {elem.context.container_heading && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Section:</span>
+                                                                            <span className="detail-value">{elem.context.container_heading}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.context.label && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Label:</span>
+                                                                            <span className="detail-value">{elem.context.label}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.context.surrounding_text && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Nearby Text:</span>
+                                                                            <span className="detail-value" style={{ color: '#7f8c8d' }}>{elem.context.surrounding_text}</span>
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             )}
-                                                            {elem.context.label && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Label:</span>
-                                                                    <span className="detail-value">{elem.context.label}</span>
-                                                                </div>
-                                                            )}
-                                                            {elem.context.surrounding_text && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Nearby Text:</span>
-                                                                    <span className="detail-value" style={{ color: '#7f8c8d' }}>{elem.context.surrounding_text}</span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
 
-                                                    {/* Dropdown Options */}
-                                                    {elem.dropdown_options && elem.dropdown_options.length > 0 && (
-                                                        <div className="detail-section dropdown-options">
-                                                            <div className="detail-section-title">📂 Dropdown Options ({elem.dropdown_options.length})</div>
-                                                            <div className="options-grid">
-                                                                {elem.dropdown_options.slice(0, 15).map((opt, i) => (
-                                                                    <div key={i} className={`option-pill ${opt.selected ? 'selected' : ''}`}>
-                                                                        {opt.text || opt.value || 'Empty'}
+                                                            {/* Dropdown Options */}
+                                                            {elem.dropdown_options && elem.dropdown_options.length > 0 && (
+                                                                <div className="detail-section dropdown-options">
+                                                                    <div className="detail-section-title">📂 Dropdown Options ({elem.dropdown_options.length})</div>
+                                                                    <div className="options-grid">
+                                                                        {elem.dropdown_options.slice(0, 15).map((opt, i) => (
+                                                                            <div key={i} className={`option-pill ${opt.selected ? 'selected' : ''}`}>
+                                                                                {opt.text || opt.value || 'Empty'}
+                                                                            </div>
+                                                                        ))}
+                                                                        {elem.dropdown_options.length > 15 && (
+                                                                            <div className="option-pill more">+{elem.dropdown_options.length - 15} more</div>
+                                                                        )}
                                                                     </div>
-                                                                ))}
-                                                                {elem.dropdown_options.length > 15 && (
-                                                                    <div className="option-pill more">+{elem.dropdown_options.length - 15} more</div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {elem.text && (
-                                                        <div className="detail-row">
-                                                            <span className="detail-label">Text:</span>
-                                                            <span className="detail-value">{elem.text}</span>
-                                                        </div>
-                                                    )}
+                                                                </div>
+                                                            )}
+                                                            {elem.text && (
+                                                                <div className="detail-row">
+                                                                    <span className="detail-label">Text:</span>
+                                                                    <span className="detail-value">{elem.text}</span>
+                                                                </div>
+                                                            )}
 
-                                                    {/* All HTML Attributes */}
-                                                    {elem.attributes && Object.keys(elem.attributes).length > 0 && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">📋 HTML Attributes</div>
-                                                            {Object.entries(elem.attributes).map(([key, value]) => (
-                                                                value && (
-                                                                    <div key={key} className="detail-row">
-                                                                        <span className="detail-label">{key}:</span>
-                                                                        <span className="detail-value">{String(value).substring(0, 100)}</span>
+                                                            {/* All HTML Attributes */}
+                                                            {elem.attributes && Object.keys(elem.attributes).length > 0 && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">📋 HTML Attributes</div>
+                                                                    {Object.entries(elem.attributes).map(([key, value]) => (
+                                                                        value && (
+                                                                            <div key={key} className="detail-row">
+                                                                                <span className="detail-label">{key}:</span>
+                                                                                <span className="detail-value">{String(value).substring(0, 100)}</span>
+                                                                            </div>
+                                                                        )
+                                                                    ))}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Element Properties */}
+                                                            {elem.properties && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">🔧 Element Properties</div>
+                                                                    {elem.properties.outerHTML && (
+                                                                        <div className="detail-row code-row">
+                                                                            <span className="detail-label">outerHTML:</span>
+                                                                            <pre className="detail-code">{elem.properties.outerHTML.substring(0, 300)}...</pre>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.properties.innerHTML && (
+                                                                        <div className="detail-row code-row">
+                                                                            <span className="detail-label">innerHTML:</span>
+                                                                            <pre className="detail-code">{elem.properties.innerHTML.substring(0, 200)}...</pre>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.properties.textContent && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">textContent:</span>
+                                                                            <span className="detail-value">{elem.properties.textContent}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.properties.classList && elem.properties.classList.length > 0 && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">classList:</span>
+                                                                            <span className="detail-value">{elem.properties.classList.join(', ')}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {elem.properties.dataset && Object.keys(elem.properties.dataset).length > 0 && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">dataset:</span>
+                                                                            <span className="detail-value">{JSON.stringify(elem.properties.dataset)}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">dimensions:</span>
+                                                                        <span className="detail-value">
+                                                                            {elem.properties.offsetWidth}×{elem.properties.offsetHeight} px
+                                                                        </span>
                                                                     </div>
-                                                                )
-                                                            ))}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Element Properties */}
-                                                    {elem.properties && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">🔧 Element Properties</div>
-                                                            {elem.properties.outerHTML && (
-                                                                <div className="detail-row code-row">
-                                                                    <span className="detail-label">outerHTML:</span>
-                                                                    <pre className="detail-code">{elem.properties.outerHTML.substring(0, 300)}...</pre>
-                                                                </div>
-                                                            )}
-                                                            {elem.properties.innerHTML && (
-                                                                <div className="detail-row code-row">
-                                                                    <span className="detail-label">innerHTML:</span>
-                                                                    <pre className="detail-code">{elem.properties.innerHTML.substring(0, 200)}...</pre>
-                                                                </div>
-                                                            )}
-                                                            {elem.properties.textContent && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">textContent:</span>
-                                                                    <span className="detail-value">{elem.properties.textContent}</span>
-                                                                </div>
-                                                            )}
-                                                            {elem.properties.classList && elem.properties.classList.length > 0 && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">classList:</span>
-                                                                    <span className="detail-value">{elem.properties.classList.join(', ')}</span>
-                                                                </div>
-                                                            )}
-                                                            {elem.properties.dataset && Object.keys(elem.properties.dataset).length > 0 && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">dataset:</span>
-                                                                    <span className="detail-value">{JSON.stringify(elem.properties.dataset)}</span>
-                                                                </div>
-                                                            )}
-                                                            <div className="detail-row">
-                                                                <span className="detail-label">dimensions:</span>
-                                                                <span className="detail-value">
-                                                                    {elem.properties.offsetWidth}×{elem.properties.offsetHeight} px
-                                                                </span>
-                                                            </div>
-                                                            <div className="detail-row">
-                                                                <span className="detail-label">children:</span>
-                                                                <span className="detail-value">{elem.properties.childElementCount || 0}</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Computed Styles */}
-                                                    {elem.computed_styles && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">🎨 Computed Styles</div>
-                                                            {Object.entries(elem.computed_styles).map(([key, value]) => (
-                                                                value && (
-                                                                    <div key={key} className="detail-row">
-                                                                        <span className="detail-label">{key}:</span>
-                                                                        <span className="detail-value">{value}</span>
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">children:</span>
+                                                                        <span className="detail-value">{elem.properties.childElementCount || 0}</span>
                                                                     </div>
-                                                                )
-                                                            ))}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Element State */}
-                                                    {elem.state && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">🎯 Element State</div>
-                                                            <div className="detail-row">
-                                                                <span className="detail-label">displayed:</span>
-                                                                <span className="detail-value">{String(elem.state.is_displayed)}</span>
-                                                            </div>
-                                                            <div className="detail-row">
-                                                                <span className="detail-label">enabled:</span>
-                                                                <span className="detail-value">{String(elem.state.is_enabled)}</span>
-                                                            </div>
-                                                            {elem.state.is_selected !== null && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">selected:</span>
-                                                                    <span className="detail-value">{String(elem.state.is_selected)}</span>
                                                                 </div>
                                                             )}
-                                                        </div>
-                                                    )}
 
-                                                    {/* Location & Size */}
-                                                    {elem.location && elem.size && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">📍 Position & Size</div>
-                                                            <div className="detail-row">
-                                                                <span className="detail-label">location:</span>
-                                                                <span className="detail-value">
-                                                                    x: {elem.location.x}, y: {elem.location.y}
-                                                                </span>
-                                                            </div>
-                                                            <div className="detail-row">
-                                                                <span className="detail-label">size:</span>
-                                                                <span className="detail-value">
-                                                                    width: {elem.size.width}, height: {elem.size.height}
-                                                                </span>
-                                                            </div>
+                                                            {/* Computed Styles */}
+                                                            {elem.computed_styles && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">🎨 Computed Styles</div>
+                                                                    {Object.entries(elem.computed_styles).map(([key, value]) => (
+                                                                        value && (
+                                                                            <div key={key} className="detail-row">
+                                                                                <span className="detail-label">{key}:</span>
+                                                                                <span className="detail-value">{value}</span>
+                                                                            </div>
+                                                                        )
+                                                                    ))}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Element State */}
+                                                            {elem.state && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">🎯 Element State</div>
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">displayed:</span>
+                                                                        <span className="detail-value">{String(elem.state.is_displayed)}</span>
+                                                                    </div>
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">enabled:</span>
+                                                                        <span className="detail-value">{String(elem.state.is_enabled)}</span>
+                                                                    </div>
+                                                                    {elem.state.is_selected !== null && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">selected:</span>
+                                                                            <span className="detail-value">{String(elem.state.is_selected)}</span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Location & Size */}
+                                                            {elem.location && elem.size && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">📍 Position & Size</div>
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">location:</span>
+                                                                        <span className="detail-value">
+                                                                            x: {elem.location.x}, y: {elem.location.y}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">size:</span>
+                                                                        <span className="detail-value">
+                                                                            width: {elem.size.width}, height: {elem.size.height}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -719,142 +739,150 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                 <div className="actions-section">
                                     <h4>📝 Filled Fields</h4>
                                     <div className="actions-list">
-                                        {executionResult.tracked_actions.filled_fields.map((field, idx) => (
-                                            <div key={idx} className="action-item input-item">
-                                                <div className="action-header">
-                                                    <span className="action-number">#{idx + 1}</span>
-                                                    <span className="action-locator">{field.locator}</span>
-                                                </div>
-                                                <div className="action-details">
-                                                    <div className="detail-row">
-                                                        <span className="detail-label">Tag:</span>
-                                                        <span className="detail-value"><code>&lt;{field.tag_name}&gt;</code></span>
+                                        {executionResult.tracked_actions.filled_fields.map((field, idx) => {
+                                            const isExpanded = expandedIds.has(`field-${idx}`);
+                                            return (
+                                                <div key={idx} className="action-item input-item">
+                                                    <div className="action-header" onClick={() => toggleExpand(`field-${idx}`)} style={{ cursor: 'pointer' }}>
+                                                        <span className="toggle-icon" style={{ marginRight: '8px', fontSize: '12px', color: '#7f8c8d' }}>
+                                                            {isExpanded ? '▼' : '▶'}
+                                                        </span>
+                                                        <span className="action-number">#{idx + 1}</span>
+                                                        <span className="action-locator">{field.locator}</span>
                                                     </div>
-
-                                                    {/* Semantic Insights */}
-                                                    {(field.exact_purpose || field.semantic_type) && (
-                                                        <div className="detail-section semantic-insights">
-                                                            <div className="detail-section-title">🧠 Semantic Insights</div>
-                                                            {field.exact_purpose && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Purpose:</span>
-                                                                    <span className="detail-value" style={{ fontWeight: '600', color: '#27ae60' }}>{field.exact_purpose}</span>
-                                                                </div>
-                                                            )}
-                                                            {field.semantic_type && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Type:</span>
-                                                                    <span className="detail-value"><span className="field-type" style={{ background: '#27ae60' }}>{field.semantic_type}</span></span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Page Context */}
-                                                    {field.context && Object.values(field.context).some(v => v) && (
-                                                        <div className="detail-section page-context">
-                                                            <div className="detail-section-title">🌐 Page Context</div>
-                                                            {field.context.container_heading && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Section:</span>
-                                                                    <span className="detail-value">{field.context.container_heading}</span>
-                                                                </div>
-                                                            )}
-                                                            {field.context.label && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">Label:</span>
-                                                                    <span className="detail-value">{field.context.label}</span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Dropdown Options */}
-                                                    {field.dropdown_options && field.dropdown_options.length > 0 && (
-                                                        <div className="detail-section dropdown-options">
-                                                            <div className="detail-section-title">📂 Dropdown Options ({field.dropdown_options.length})</div>
-                                                            <div className="options-grid">
-                                                                {field.dropdown_options.slice(0, 15).map((opt, i) => (
-                                                                    <div key={i} className={`option-pill ${opt.selected ? 'selected' : ''}`} style={{ borderColor: '#27ae60' }}>
-                                                                        {opt.text || opt.value || 'Empty'}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {(field.value || field.input_value) && (
-                                                        <div className="detail-row">
-                                                            <span className="detail-label">Value Entered:</span>
-                                                            <span className="detail-value">{field.value || field.input_value}</span>
-                                                        </div>
-                                                    )}
-
-                                                    {/* All HTML Attributes */}
-                                                    {field.attributes && Object.keys(field.attributes).length > 0 && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">📋 HTML Attributes</div>
-                                                            {Object.entries(field.attributes).map(([key, value]) => (
-                                                                value && (
-                                                                    <div key={key} className="detail-row">
-                                                                        <span className="detail-label">{key}:</span>
-                                                                        <span className="detail-value">{String(value).substring(0, 100)}</span>
-                                                                    </div>
-                                                                )
-                                                            ))}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Element Properties */}
-                                                    {field.properties && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">🔧 Element Properties</div>
-                                                            {field.properties.outerHTML && (
-                                                                <div className="detail-row code-row">
-                                                                    <span className="detail-label">outerHTML:</span>
-                                                                    <pre className="detail-code">{field.properties.outerHTML.substring(0, 300)}...</pre>
-                                                                </div>
-                                                            )}
-                                                            {field.properties.classList && field.properties.classList.length > 0 && (
-                                                                <div className="detail-row">
-                                                                    <span className="detail-label">classList:</span>
-                                                                    <span className="detail-value">{field.properties.classList.join(', ')}</span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Computed Styles */}
-                                                    {field.computed_styles && Object.keys(field.computed_styles).length > 0 && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">🎨 Computed Styles</div>
-                                                            {Object.entries(field.computed_styles).map(([key, value]) => (
-                                                                value && (
-                                                                    <div key={key} className="detail-row">
-                                                                        <span className="detail-label">{key}:</span>
-                                                                        <span className="detail-value">{value}</span>
-                                                                    </div>
-                                                                )
-                                                            ))}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Element State */}
-                                                    {field.state && (
-                                                        <div className="detail-section">
-                                                            <div className="detail-section-title">🎯 Element State</div>
+                                                    {isExpanded && (
+                                                        <div className="action-details">
                                                             <div className="detail-row">
-                                                                <span className="detail-label">displayed:</span>
-                                                                <span className="detail-value">{String(field.state.is_displayed)}</span>
+                                                                <span className="detail-label">Tag:</span>
+                                                                <span className="detail-value"><code>&lt;{field.tag_name}&gt;</code></span>
                                                             </div>
-                                                            <div className="detail-row">
-                                                                <span className="detail-label">enabled:</span>
-                                                                <span className="detail-value">{String(field.state.is_enabled)}</span>
-                                                            </div>
+
+                                                            {/* Semantic Insights */}
+                                                            {(field.exact_purpose || field.semantic_type) && (
+                                                                <div className="detail-section semantic-insights">
+                                                                    <div className="detail-section-title">🧠 Semantic Insights</div>
+                                                                    {field.exact_purpose && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Purpose:</span>
+                                                                            <span className="detail-value" style={{ fontWeight: '600', color: '#27ae60' }}>{field.exact_purpose}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {field.semantic_type && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Type:</span>
+                                                                            <span className="detail-value"><span className="field-type" style={{ background: '#27ae60' }}>{field.semantic_type}</span></span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Page Context */}
+                                                            {field.context && Object.values(field.context).some(v => v) && (
+                                                                <div className="detail-section page-context">
+                                                                    <div className="detail-section-title">🌐 Page Context</div>
+                                                                    {field.context.container_heading && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Section:</span>
+                                                                            <span className="detail-value">{field.context.container_heading}</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {field.context.label && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">Label:</span>
+                                                                            <span className="detail-value">{field.context.label}</span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Dropdown Options */}
+                                                            {field.dropdown_options && field.dropdown_options.length > 0 && (
+                                                                <div className="detail-section dropdown-options">
+                                                                    <div className="detail-section-title">📂 Dropdown Options ({field.dropdown_options.length})</div>
+                                                                    <div className="options-grid">
+                                                                        {field.dropdown_options.slice(0, 15).map((opt, i) => (
+                                                                            <div key={i} className={`option-pill ${opt.selected ? 'selected' : ''}`} style={{ borderColor: '#27ae60' }}>
+                                                                                {opt.text || opt.value || 'Empty'}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                            {(field.value || field.input_value) && (
+                                                                <div className="detail-row">
+                                                                    <span className="detail-label">Value Entered:</span>
+                                                                    <span className="detail-value">{field.value || field.input_value}</span>
+                                                                </div>
+                                                            )}
+
+                                                            {/* All HTML Attributes */}
+                                                            {field.attributes && Object.keys(field.attributes).length > 0 && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">📋 HTML Attributes</div>
+                                                                    {Object.entries(field.attributes).map(([key, value]) => (
+                                                                        value && (
+                                                                            <div key={key} className="detail-row">
+                                                                                <span className="detail-label">{key}:</span>
+                                                                                <span className="detail-value">{String(value).substring(0, 100)}</span>
+                                                                            </div>
+                                                                        )
+                                                                    ))}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Element Properties */}
+                                                            {field.properties && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">🔧 Element Properties</div>
+                                                                    {field.properties.outerHTML && (
+                                                                        <div className="detail-row code-row">
+                                                                            <span className="detail-label">outerHTML:</span>
+                                                                            <pre className="detail-code">{field.properties.outerHTML.substring(0, 300)}...</pre>
+                                                                        </div>
+                                                                    )}
+                                                                    {field.properties.classList && field.properties.classList.length > 0 && (
+                                                                        <div className="detail-row">
+                                                                            <span className="detail-label">classList:</span>
+                                                                            <span className="detail-value">{field.properties.classList.join(', ')}</span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Computed Styles */}
+                                                            {field.computed_styles && Object.keys(field.computed_styles).length > 0 && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">🎨 Computed Styles</div>
+                                                                    {Object.entries(field.computed_styles).map(([key, value]) => (
+                                                                        value && (
+                                                                            <div key={key} className="detail-row">
+                                                                                <span className="detail-label">{key}:</span>
+                                                                                <span className="detail-value">{value}</span>
+                                                                            </div>
+                                                                        )
+                                                                    ))}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Element State */}
+                                                            {field.state && (
+                                                                <div className="detail-section">
+                                                                    <div className="detail-section-title">🎯 Element State</div>
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">displayed:</span>
+                                                                        <span className="detail-value">{String(field.state.is_displayed)}</span>
+                                                                    </div>
+                                                                    <div className="detail-row">
+                                                                        <span className="detail-label">enabled:</span>
+                                                                        <span className="detail-value">{String(field.state.is_enabled)}</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -874,157 +902,117 @@ function ScriptExecutor({ onSchemaGenerated }) {
                                         });
 
                                         return (
-                                            <div className="api-groups-container">
-                                                {Object.entries(apisByClick).map(([clickLocator, apis], groupIdx) => {
-                                                    const firstCall = apis[0];
-                                                    const trigger = firstCall.trigger_details;
-
-                                                    return (
-                                                        <div key={groupIdx} className="api-group">
-                                                            <div className="api-group-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
-                                                                <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: '8px' }}>
-                                                                    <span className="api-group-icon">🖱️</span>
-                                                                    <span className="api-group-title">
-                                                                        Triggered by: <strong>{clickLocator}</strong>
-                                                                    </span>
-                                                                    <span className="api-group-count" style={{ marginLeft: 'auto' }}>
-                                                                        {apis.length} API call{apis.length !== 1 ? 's' : ''}
-                                                                    </span>
-                                                                </div>
-
-                                                                {/* Rich Semantic Trigger Info */}
-                                                                {trigger && (
-                                                                    <div className="trigger-metadata" style={{
-                                                                        width: '100%',
-                                                                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                                                                        padding: '12px',
-                                                                        borderRadius: '8px',
-                                                                        borderLeft: '4px solid #e74c3c'
-                                                                    }}>
-                                                                        {(trigger.exact_purpose || trigger.semantic_type) && (
-                                                                            <div className="detail-section semantic-insights" style={{ marginBottom: '10px' }}>
-                                                                                <div className="detail-section-title" style={{ color: '#e74c3c', fontSize: '13px', fontWeight: 'bold', marginBottom: '6px' }}>🧠 Semantic Insights</div>
-                                                                                {trigger.exact_purpose && (
-                                                                                    <div className="detail-row">
-                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Purpose:</span>
-                                                                                        <span className="detail-value" style={{ fontWeight: '600', color: '#2980b9', marginLeft: '8px' }}>{trigger.exact_purpose}</span>
-                                                                                    </div>
-                                                                                )}
-                                                                                {trigger.semantic_type && (
-                                                                                    <div className="detail-row">
-                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Type:</span>
-                                                                                        <span className="detail-value" style={{ marginLeft: '8px' }}><span className="field-type">{trigger.semantic_type}</span></span>
-                                                                                    </div>
-                                                                                )}
-                                                                                {trigger.role_description && (
-                                                                                    <div className="detail-row">
-                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Role:</span>
-                                                                                        <span className="detail-value" style={{ fontStyle: 'italic', fontSize: '12px', marginLeft: '8px' }}>{trigger.role_description}</span>
-                                                                                    </div>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
-
-                                                                        {trigger.context && Object.values(trigger.context).some(v => v) && (
-                                                                            <div className="detail-section page-context">
-                                                                                <div className="detail-section-title" style={{ color: '#e74c3c', fontSize: '13px', fontWeight: 'bold', marginBottom: '6px' }}>🌐 Page Context</div>
-                                                                                {trigger.context.container_heading && (
-                                                                                    <div className="detail-row">
-                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Section:</span>
-                                                                                        <span className="detail-value" style={{ marginLeft: '8px' }}>{trigger.context.container_heading}</span>
-                                                                                    </div>
-                                                                                )}
-                                                                                {trigger.context.label && (
-                                                                                    <div className="detail-row">
-                                                                                        <span className="detail-label" style={{ color: '#7f8c8d', fontSize: '12px' }}>Label:</span>
-                                                                                        <span className="detail-value" style={{ marginLeft: '8px' }}>{trigger.context.label}</span>
-                                                                                    </div>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-
-                                                            <div className="api-group-items">
-                                                                {apis.map((call, idx) => (
-                                                                    <div key={idx} className="action-item api-item">
-                                                                        <div className="action-header">
-                                                                            <span className="action-number">#{idx + 1}</span>
+                                            <div className="api-table-container">
+                                                <table className="api-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th style={{ width: '50px' }}>#</th>
+                                                            <th style={{ width: '80px' }}>Method</th>
+                                                            <th style={{ width: '80px' }}>Status</th>
+                                                            <th>URL</th>
+                                                            <th>Trigger</th>
+                                                            <th style={{ width: '80px' }}>Time</th>
+                                                            <th style={{ width: '40px' }}></th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {Object.entries(apisByClick).flatMap(([clickLocator, apis], groupIdx) =>
+                                                            apis.map((call, callIdx) => ({ ...call, groupTrigger: clickLocator, groupIdx, callIdx, globalIdx: groupIdx * 1000 + callIdx })) // improved key gen
+                                                        ).map((call, idx) => {
+                                                            const isExpanded = expandedIds.has(`call-${idx}`);
+                                                            return (
+                                                                <React.Fragment key={idx}>
+                                                                    <tr
+                                                                        className={`api-row ${isExpanded ? 'expanded' : ''}`}
+                                                                        onClick={() => toggleExpand(`call-${idx}`)}
+                                                                    >
+                                                                        <td className="row-id">#{idx + 1}</td>
+                                                                        <td>
                                                                             <span className={`method-badge method-${call.method.toLowerCase()}`}>
                                                                                 {call.method}
                                                                             </span>
-                                                                            <span className="action-url" title={call.url}>
-                                                                                {call.url}
-                                                                            </span>
+                                                                        </td>
+                                                                        <td>
                                                                             {call.response_code && (
                                                                                 <span className={`status-badge status-${String(call.response_code)[0]}xx`}>
                                                                                     {call.response_code}
                                                                                 </span>
                                                                             )}
-                                                                            {call.time_after_click !== undefined && (
-                                                                                <span className="time-badge" title="Time after click">
-                                                                                    ⏱️ +{call.time_after_click.toFixed(2)}s
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                        <div className="action-details">
-                                                                            {/* Click Association Info */}
-                                                                            {call.triggered_by_click && call.time_after_click !== undefined && (
-                                                                                <div className="detail-section click-association">
-                                                                                    <div className="detail-section-title">🎯 Click Association</div>
-                                                                                    <div className="detail-row">
-                                                                                        <span className="detail-label">Triggered by:</span>
-                                                                                        <span className="detail-value" style={{ fontWeight: '600', color: '#e74c3c' }}>
-                                                                                            {call.trigger_details?.exact_purpose || call.triggered_by_click}
-                                                                                        </span>
-                                                                                    </div>
-                                                                                    {call.trigger_details?.exact_purpose && call.trigger_details.locator && (
-                                                                                        <div className="detail-row" style={{ marginTop: '2px' }}>
-                                                                                            <span className="detail-label" style={{ fontSize: '11px', opacity: 0.7 }}>Locator:</span>
-                                                                                            <span className="detail-value" style={{ fontSize: '11px', opacity: 0.7 }}>{call.trigger_details.locator}</span>
+                                                                        </td>
+                                                                        <td className="row-url" title={call.url}>
+                                                                            {call.url}
+                                                                        </td>
+                                                                        <td className="row-trigger" title={call.groupTrigger}>
+                                                                            <span className="trigger-badge">
+                                                                                {call.groupTrigger.length > 30 ? call.groupTrigger.substring(0, 30) + '...' : call.groupTrigger}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="row-time">
+                                                                            {call.time_after_click !== undefined ? `+${call.time_after_click.toFixed(2)}s` : '-'}
+                                                                        </td>
+                                                                        <td className="row-toggle">
+                                                                            {isExpanded ? '▼' : '▶'}
+                                                                        </td>
+                                                                    </tr>
+                                                                    {isExpanded && (
+                                                                        <tr className="api-details-row">
+                                                                            <td colSpan="7">
+                                                                                <div className="api-details-panel">
+                                                                                    {/* Semantic Trigger Context - Now shown in details */}
+                                                                                    {call.trigger_details && (call.trigger_details.exact_purpose || call.trigger_details.semantic_type) && (
+                                                                                        <div className="detail-section semantic-insights">
+                                                                                            <div className="detail-section-title">🧠 Semantic Context</div>
+                                                                                            <div className="detail-grid">
+                                                                                                {call.trigger_details.exact_purpose && (
+                                                                                                    <div className="detail-item">
+                                                                                                        <span className="label">Purpose:</span>
+                                                                                                        <span className="value">{call.trigger_details.exact_purpose}</span>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                {call.trigger_details.semantic_type && (
+                                                                                                    <div className="detail-item">
+                                                                                                        <span className="label">Type:</span>
+                                                                                                        <span className="value tag">{call.trigger_details.semantic_type}</span>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                <div className="detail-item">
+                                                                                                    <span className="label">Full Trigger:</span>
+                                                                                                    <span className="value code">{call.groupTrigger}</span>
+                                                                                                </div>
+                                                                                            </div>
                                                                                         </div>
                                                                                     )}
-                                                                                    <div className="detail-row">
-                                                                                        <span className="detail-label">Time after click:</span>
-                                                                                        <span className="detail-value">
-                                                                                            {call.time_after_click.toFixed(3)} seconds
-                                                                                        </span>
-                                                                                    </div>
-                                                                                </div>
-                                                                            )}
 
-                                                                            {call.payload && (
-                                                                                <div className="detail-section">
-                                                                                    <div className="detail-section-title">📦 Payload</div>
-                                                                                    <div className="detail-row code-row">
-                                                                                        <pre className="detail-code">
-                                                                                            {typeof call.payload === 'object'
-                                                                                                ? JSON.stringify(call.payload, null, 2)
-                                                                                                : String(call.payload).substring(0, 500) + (String(call.payload).length > 500 ? '...' : '')}
-                                                                                        </pre>
+                                                                                    <div className="detail-section">
+                                                                                        <div className="detail-section-title">📦 Request & Response</div>
+                                                                                        <div className="payload-response-grid">
+                                                                                            <div className="payload-box">
+                                                                                                <div className="box-header">Payload</div>
+                                                                                                <pre className="box-content">
+                                                                                                    {call.payload
+                                                                                                        ? (typeof call.payload === 'object' ? JSON.stringify(call.payload, null, 2) : String(call.payload))
+                                                                                                        : <span className="empty-text">No Payload</span>}
+                                                                                                </pre>
+                                                                                            </div>
+                                                                                            <div className="response-box">
+                                                                                                <div className="box-header">Response</div>
+                                                                                                <pre className="box-content">
+                                                                                                    {call.response_body
+                                                                                                        ? (typeof call.response_body === 'object' ? JSON.stringify(call.response_body, null, 2) : String(call.response_body))
+                                                                                                        : <span className="empty-text">No Response</span>}
+                                                                                                </pre>
+                                                                                            </div>
+                                                                                        </div>
                                                                                     </div>
                                                                                 </div>
-                                                                            )}
-                                                                            {call.response_body && (
-                                                                                <div className="detail-section">
-                                                                                    <div className="detail-section-title">📥 Response</div>
-                                                                                    <div className="detail-row code-row">
-                                                                                        <pre className="detail-code">
-                                                                                            {typeof call.response_body === 'object'
-                                                                                                ? JSON.stringify(call.response_body, null, 2)
-                                                                                                : String(call.response_body).substring(0, 500) + (String(call.response_body).length > 500 ? '...' : '')}
-                                                                                        </pre>
-                                                                                    </div>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
+                                                                            </td>
+                                                                        </tr>
+                                                                    )}
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
                                             </div>
                                         );
                                     })()}

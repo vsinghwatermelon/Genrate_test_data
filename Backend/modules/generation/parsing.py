@@ -12,8 +12,9 @@ from typing import List, Dict, Any, Optional
 import json
 import logging
 
-from endpoints.common import get_llm_with_fallback, parse_llm_json_response
-from prompts_config.llm_prompts import get_parse_elements_prompt
+from modules.shared.common_utils import get_llm_with_fallback
+from modules.shared.json_utils import parse_llm_json_response
+from modules.generation.prompts_config.llm_prompts import get_parse_elements_prompt
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
